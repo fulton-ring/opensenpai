@@ -13,7 +13,9 @@
     "./service": "./dist/service.js",
     "./providers": "./dist/providers/index.js",
     "./storage": "./dist/storage/index.js",
-    "./runtime": "./dist/runtime/index.js"
+    "./runtime": "./dist/runtime/index.js",
+    "./storage/protocol": "./dist/storage/protocol.js",
+    "./storage/durable-sql": "./dist/storage/durable-sql.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

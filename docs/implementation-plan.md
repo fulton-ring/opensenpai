@@ -1,6 +1,6 @@
 # OpenSenpai implementation plan
 
-Approved scope: MCP-first research execution with native Mastra facilities, libSQL, standalone/split Docker, all-Cloudflare deployment support, and real external-agent acceptance. External agents own scheduling and synthesis. No customer billing, accounts, research scheduler, customer UI, Postgres adapter, or Kubernetes manifests in this release.
+Approved scope: MCP-first research execution with native Mastra facilities, local libSQL, standalone/split Docker, Cloudflare-native persistence, and real external-agent acceptance. External agents own scheduling and synthesis. No customer billing, accounts, research scheduler, customer UI, Postgres adapter, or Kubernetes manifests in this release.
 
 ## Tasks
 - [x] Foundation: contracts, pinned dependencies, strict TypeScript, Biome/JPL checks, Vitest, Git isolation.
@@ -8,7 +8,7 @@ Approved scope: MCP-first research execution with native Mastra facilities, libS
 - [x] Providers: native integrations for OpenAI/Anthropic/Vertex, explicit Perplexity Agent API, OpenRouter, controlled Exa retrieval, complete raw evidence.
 - [x] Runtime: bounded Mastra observation workflows, combined/API/worker modes, no hidden paid retries, truthful recovery.
 - [x] MCP: list_targets, estimate_run, start_run, get_run, get_results, list_runs, cancel_run; HTTP bearer auth and stdio.
-- [x] Deployment: Docker, split Compose/libSQL/Valkey, Workers+Queues+remote libSQL; Cloudflare Containers fallback if runtime compatibility fails.
+- [x] Deployment: Docker, split Compose/libSQL/Valkey, Workers+Queues+Containers, Durable Object SQLite research records, and native Mastra D1 metadata.
 - [x] Verification: deterministic failure/concurrency/restart tests; actual external-agent MCP calls with correlated persistent evidence.
 - [x] Documentation/CI: commands, configuration, credentials, backup/restore, budgets, native-vs-controlled interpretation.
 
@@ -25,8 +25,8 @@ Root owns contracts/manifests/lockfile and integration. Isolated worktrees and e
 
 Real Claude Code agents using the funded OpenRouter gateway completed all seven MCP tools over HTTP and stdio. HTTP ran five Fulton Ring prompts against router-exa and perplexity-native (10 successful observations); stdio ran one successful router-exa observation. Reports and redacted transcripts are in ignored `.artifacts/real-agent/`. Cumulative conservative accounting is $8.2229494, including retained allowances for failed or uncertain probes. No further paid acceptance dispatch is needed.
 
-Standalone Docker, split API/worker with real Valkey and libSQL, service restart preservation, and duplicate terminal delivery through the Cloudflare adapter have been checked locally. Direct OpenAI and Anthropic accounts lack credit; Vertex billing is disabled. Perplexity and OpenRouter/Exa real calls succeeded. Cloudflare publication remains dependent on account credentials.
+Standalone Docker, split API/worker with real Valkey and libSQL, service restart preservation, and duplicate terminal delivery through the Cloudflare adapter have been checked locally. Direct OpenAI and Anthropic accounts lack credit; Vertex billing is disabled. Perplexity and OpenRouter/Exa real calls succeeded. Cloudflare OAuth access is available. D1 and queues are provisioned; publication awaits explicit authorization to export the application/provider secrets after automatic approval review rejected that upload.
 
 The user additionally requested files below 1,000 lines and at most ten files per source/test folder. Biome enforces 999 lines; the companion structure check runs inside `pnpm lint` and CI. Root configuration files are exempt by explicit user choice.
 
-Final verification: `pnpm check` passes 182 deterministic tests plus lint (Biome and folder structure), strict typechecking, and all Turborepo builds. The complete Wrangler dry run also builds the Linux AMD64 production container successfully. Runtime/storage review confirms provider and shared-search authorization, late-result persistence, budget refusal, and lease recovery. No Cloudflare resources were published.
+Final verification: `pnpm check` passes 182 deterministic tests plus lint (Biome and folder structure), strict typechecking, and all Turborepo builds. The complete Wrangler dry run also builds the Linux AMD64 production container successfully. Runtime/storage review confirms provider and shared-search authorization, late-result persistence, budget refusal, and lease recovery. That verification preceded the Cloudflare-native persistence change. The follow-up design and current deployment status are tracked in [cloudflare-storage.md](cloudflare-storage.md).

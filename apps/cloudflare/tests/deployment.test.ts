@@ -29,6 +29,7 @@ describe("Cloudflare deployment delivery", () => {
       applicationEnvironment({
         DATABASE_URL: "libsql://database.example",
         DATABASE_AUTH_TOKEN: "database-secret",
+        MASTRA_STORAGE_AUTH_TOKEN: "metadata-secret",
         MASTRA_STORAGE_URL: "file:ephemeral.db",
         CLOUDFLARE_API_TOKEN: "account-secret",
         CF_API_TOKEN: "alias-secret",

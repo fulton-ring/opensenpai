@@ -26,9 +26,15 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.19.2
+      esbuild:
+        specifier: 0.28.2
+        version: 0.28.2
       mastra:
         specifier: 1.34.2
         version: 1.34.2(@hono/node-server@1.19.11(hono@4.13.13))(@mastra/core@1.78.0(ai@7.0.143(zod@4.6.7))(zod@4.6.7))(typescript@5.9.3)(zod@4.6.7)
+      miniflare:
+        specifier: 5.20261012.1-beta
+        version: 5.20261012.1-beta(@types/node@24.19.2)
       tsx:
         specifier: 4.23.15
         version: 4.23.15
@@ -50,6 +56,9 @@ importers:
       '@cloudflare/containers':
         specifier: 0.3.7
         version: 0.3.7
+      '@opensenpai/core':
+        specifier: workspace:*
+        version: link:../../packages/core
 
   apps/server:
     dependencies:

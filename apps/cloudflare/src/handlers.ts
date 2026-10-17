@@ -116,7 +116,7 @@ export function applicationEnvironment(bindings: Record<string, unknown>): Recor
     Object.entries(bindings).filter(
       (entry): entry is [string, string] =>
         typeof entry[1] === "string" &&
-        !/^(DATABASE_URL|DATABASE_AUTH_TOKEN|MASTRA_STORAGE_URL|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|CLOUDFLARE_API_KEY|CF_API_KEY)$/.test(
+        !/^(DATABASE_URL|DATABASE_AUTH_TOKEN|MASTRA_STORAGE_URL|MASTRA_STORAGE_AUTH_TOKEN|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|CLOUDFLARE_API_KEY|CF_API_KEY)$/.test(
           entry[0],
         ),
     ),

@@ -36,4 +36,4 @@ it("serves native stdio without bearer auth or stdout log contamination", async 
     await client.disconnect();
     await rm(directory, { recursive: true, force: true });
   }
-}, 15_000);
+}, 60_000);

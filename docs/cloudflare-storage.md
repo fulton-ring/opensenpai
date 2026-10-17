@@ -4,14 +4,18 @@ The hosted profile uses Cloudflare databases. Research records live in the exist
 
 Research mutations currently perform dependent reads and writes inside a transaction. Durable Object SQLite supports these asynchronous transaction callbacks, so it can reuse the existing research store and its claiming, budget, idempotency, and reconciliation rules. D1 uses atomic batches instead of interactive transactions; it fits Mastra's native D1 adapter without rewriting the research state machine.
 
-The Node container accesses both stores through private outbound host handlers. One handler calls workspace-scoped research methods on the owning Durable Object; another provides D1 prepared-query and batch operations through the D1 binding. Public Worker ingress never routes either handler. The container receives no Cloudflare account API token and keeps no authoritative database on its ephemeral filesystem.
+The Node container accesses both stores through private outbound host handlers. One handler calls workspace-scoped research methods on the owning Durable Object; another provides prepared queries through the D1 binding. Public Worker ingress never routes either handler. The container receives no Cloudflare account API token and keeps no authoritative database on its ephemeral filesystem.
 
 ## Implementation
 
-- [ ] Add a narrow SQL client/transaction injection boundary to the shared research store; implement Cloudflare SQL cursor conversion and transaction-backed RPC dispatch using real Durable Object storage.
-- [ ] Add Node clients for the private research and D1 endpoints; select them with `STORAGE_BACKEND=cloudflare` and instantiate Mastra's native `D1Store` with its binding-compatible client.
-- [ ] Bind a D1 database, wire the private outbound handlers, remove remote libSQL requirements from the Cloudflare adapter, and retain authenticated MCP ingress and bounded queue execution.
-- [ ] Test rollback, concurrent claims, idempotency, cancellation, reservations, immutable evidence, private routing, and persistence across container restart. Run the complete repository checks and Cloudflare build; provision and verify a staging deployment with the authenticated CLI.
+- [x] Add a narrow SQL client/transaction injection boundary to the shared research store; implement Cloudflare SQL cursor conversion and transaction-backed RPC dispatch using real Durable Object storage.
+- [x] Add Node clients for the private research and D1 endpoints; select them with `STORAGE_BACKEND=cloudflare` and instantiate Mastra's native `D1Store` with its binding-compatible client.
+- [x] Bind a D1 database, wire the private outbound handlers, remove remote libSQL requirements from the Cloudflare adapter, and retain authenticated MCP ingress and bounded queue execution.
+- [x] Test rollback, concurrent claims, idempotency, cancellation, reservations, immutable evidence, private routing, and persistence across container restart.
+- [ ] Finish repository checks and the complete Cloudflare image build.
+- [ ] Publish and verify the hosted service after explicit approval to upload its secrets.
+
+The authenticated CLI provisioned `opensenpai-mastra` and the observation/dead-letter queues. Automatic approval review rejected the secret upload because exporting the existing credentials to Cloudflare requires explicit permission. The rejected upload contained the two app authentication tokens and OpenRouter, Exa, and Perplexity keys; no values were printed and no credentials were uploaded.
 
 ## Guardrails
 

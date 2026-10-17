@@ -14,6 +14,6 @@ Use integer credit units for the wallet. Research records distinguish provider-r
 
 Storage queries and run idempotency are workspace-scoped. The current CLI constructs one workspace-bound store and service. A hosted identity layer must construct or select the correct workspace-bound service after authentication. The supplied Cloudflare Worker currently routes to one named container; customer routing and account provisioning must be added before offering shared paid hosting.
 
-Workers handle authentication, MCP ingress, queue delivery, and purchase webhooks. Containers run the native Node/Mastra application. Remote libSQL stores durable research state and can also host the separate wallet tables. Queues contain observation IDs, never prompts or provider credentials. Existing compare-and-set claims prevent duplicate delivery from repeating a paid operation.
+Workers handle authentication, MCP ingress, queue delivery, and purchase webhooks. Containers run the native Node/Mastra application. Durable Object SQLite stores durable research state; D1 stores native Mastra workflow metadata. A future wallet can use its own Cloudflare transaction boundary and append-only ledger. Queues contain observation IDs, never prompts or provider credentials. Existing compare-and-set claims prevent duplicate delivery from repeating a paid operation.
 
 Research scheduling stays with the customer's agent. Infrastructure repair only recovers and dispatches previously accepted work.

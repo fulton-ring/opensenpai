@@ -1,4 +1,4 @@
-import { type D1QueryResult, D1Store } from "@mastra/cloudflare-d1";
+import type { D1QueryResult } from "@mastra/cloudflare-d1";
 import { ResearchError } from "@opensenpai/core/contracts";
 import {
   deserializeResearchError,
@@ -72,7 +72,11 @@ export function createCloudflareResearchStorage(
   } as ResearchStorage;
 }
 
-export function createCloudflareD1Storage(workspaceId: string, bridgeFetch: BridgeFetch = fetch) {
+export async function createCloudflareD1Storage(
+  workspaceId: string,
+  bridgeFetch: BridgeFetch = fetch,
+) {
+  const { D1Store } = await import("@mastra/cloudflare-d1");
   return new D1Store({
     id: `opensenpai-${workspaceId}`,
     client: {

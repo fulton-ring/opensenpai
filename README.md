@@ -1,6 +1,6 @@
 # OpenSenpai
 
-OpenSenpai is an MCP service for running bounded research experiments across model providers and search modes. An external agent supplies prompts, chooses targets, starts a run, and retrieves durable results for its own analysis. That agent owns scheduling and synthesis; OpenSenpai executes accepted work through native Mastra workflows and stores evidence in libSQL.
+OpenSenpai is an MCP service for running bounded research experiments across model providers and search modes. An external agent supplies prompts, chooses targets, starts a run, and retrieves durable results for its own analysis. That agent owns scheduling and synthesis; OpenSenpai executes accepted work through native Mastra workflows and stores evidence in libSQL locally or Cloudflare-native databases when hosted.
 
 The pnpm/Turborepo workspace contains:
 
@@ -114,13 +114,13 @@ Native search lets the provider decide how to search. Controlled Exa retrieval s
 
 Observations can be `pending`, `running`, `succeeded`, `failed`, `cancelled`, or `unknown_outcome`. A dispatched request whose outcome cannot be established is retained as unknown; it is not automatically retried as another paid call. Cancellation can leave incurred costs and useful outputs. Inspect durable attempts before deliberately submitting replacement work.
 
-Results retain requested and returned models, serving-provider metadata where available, search activity, citations, sources, usage, and errors. Missing token counts or charges remain null. Estimated cost and reported cost are distinct: `max_estimated_cost_usd` gates the estimate before dispatch, not the vendor's final bill. Reservations remain when charges are uncertain. Back up the libSQL database, not just container images.
+Results retain requested and returned models, serving-provider metadata where available, search activity, citations, sources, usage, and errors. Missing token counts or charges remain null. Estimated cost and reported cost are distinct: `max_estimated_cost_usd` gates the estimate before dispatch, not the vendor's final bill. Reservations remain when charges are uncertain. Back up the research and Mastra databases independently of container images.
 
 ## Deployment and roles
 
 The combined `all` role is the default for local use. The `api` role accepts runs; the `worker` role executes them. Native split deployments require shared remote `DATABASE_URL`, optional `DATABASE_AUTH_TOKEN`, and `VALKEY_URL`. API and worker must use the same `WORKSPACE_ID` and target configuration. Workers require an `INTERNAL_EXECUTION_TOKEN` of at least 16 characters, distinct from the MCP token.
 
-Standalone Docker, split Compose with libSQL/Valkey, and Cloudflare deployment instructions are in [deploy/README.md](deploy/README.md). Cloudflare uses Worker ingress and Queues with the native Node application in a Container, backed by remote libSQL. Its repair Cron dispatches already accepted work; it does not schedule new research experiments.
+Standalone Docker, split Compose with libSQL/Valkey, and Cloudflare deployment instructions are in [deploy/README.md](deploy/README.md). Cloudflare uses Worker ingress and Queues with the native Node application in a Container, backed by Durable Object SQLite for research records and D1 for Mastra workflow metadata. Its repair Cron dispatches already accepted work; it does not schedule new research experiments.
 
 Workspace-scoped storage and execution authorization/settlement hooks provide a foundation for a hosted service. The CLI uses one trusted `WORKSPACE_ID`; customer authentication, account provisioning, subscriptions, and billing are not implemented. A hosted integration must resolve workspace identity before constructing the service and supply its own authorization policy.
 
