@@ -160,6 +160,22 @@ export function redactTranscript(text: string, secrets: string[] = []): string {
     .join("\n");
 }
 
+function spendAllowance(name: string, value: string | undefined, maximum: number): number {
+  const allowance = value === undefined ? maximum : Number(value);
+  if (!Number.isFinite(allowance) || allowance <= 0 || allowance > maximum)
+    throw new Error(`${name} must be finite, positive, and at most ${maximum}`);
+  return allowance;
+}
+export function spendAllowances(env: NodeJS.ProcessEnv): {
+  agentAllowance: number;
+  appAllowance: number;
+} {
+  return {
+    agentAllowance: spendAllowance("E2E_AGENT_BUDGET_USD", env.E2E_AGENT_BUDGET_USD, 2),
+    appAllowance: spendAllowance("E2E_APP_BUDGET_USD", env.E2E_APP_BUDGET_USD, 1),
+  };
+}
+
 export function reserveSpend(
   ledger: SpendLedger,
   id: string,
@@ -170,6 +186,8 @@ export function reserveSpend(
     ![ledger.spentUsd, agentAllowance, appAllowance].every(
       (value) => Number.isFinite(value) && value >= 0,
     ) ||
+    agentAllowance <= 0 ||
+    appAllowance <= 0 ||
     agentAllowance > 2 ||
     appAllowance > 1 ||
     ledger.entries.some((entry) => entry.id === id)

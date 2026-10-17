@@ -15,6 +15,7 @@ import {
   reserveSpend,
   runChild,
   type SpendLedger,
+  spendAllowances,
 } from "./harness.js";
 
 type Options = {
@@ -29,6 +30,8 @@ type Options = {
   storeModule: string;
   agentBin: string;
   workspace: string;
+  agentAllowance: number;
+  appAllowance: number;
 };
 type Run = {
   id: string;
@@ -126,6 +129,7 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
   )
     throw new Error("Invalid server URL");
   return {
+    ...spendAllowances(env),
     url: url.replace(/\/$/, ""),
     transport,
     targets,
@@ -231,7 +235,8 @@ export const BUSINESS_PROMPTS = [
 
 function agentPrompt(options: Options, suite: string): string {
   const prompts = options.full ? BUSINESS_PROMPTS : BUSINESS_PROMPTS.slice(0, 1);
-  return `You are operating the aeo MCP research service for an acceptance test. Use only its seven provided tools; do not perform research yourself. List targets and ensure ${JSON.stringify(options.targets)} exist. Estimate then start exactly one primary run using ${JSON.stringify({ prompts, targets: options.targets, repetitions: 1, project: suite, idempotency_key: suite, max_estimated_cost_usd: 0.5 })}. If estimate is unknown or exceeds $0.50, stop without starting. Poll get_run with wait_ms:10000 until terminal (at most 16 polls); then get_results with include_raw:false and list_runs. Retrieve every primary observation, summarize retrieved answers and source evidence without inventing facts. Exercise cancel_run on the completed primary run (no new run), then get_run to confirm results remain accessible. Make exactly one start_run call and never retry a paid run. Total provider observations must be <=10. If anything errors, report failure; do not substitute your own answer. End with run ID, result count, statuses, citations, and uncertainties.`;
+  const appBudget = Math.min(0.5, options.appAllowance);
+  return `You are operating the aeo MCP research service for an acceptance test. Use only its seven provided tools; do not perform research yourself. List targets and ensure ${JSON.stringify(options.targets)} exist. Estimate then start exactly one primary run using ${JSON.stringify({ prompts, targets: options.targets, repetitions: 1, project: suite, idempotency_key: suite, max_estimated_cost_usd: appBudget })}. If estimate is unknown or exceeds $${appBudget}, stop without starting. Poll get_run with wait_ms:10000 until terminal (at most 16 polls); then get_results with include_raw:false and list_runs. Retrieve every primary observation, summarize retrieved answers and source evidence without inventing facts. Exercise cancel_run on the completed primary run (no new run), then get_run to confirm results remain accessible. Make exactly one start_run call and never retry a paid run. Total provider observations must be <=10. If anything errors, report failure; do not substitute your own answer. End with run ID, result count, statuses, citations, and uncertainties.`;
 }
 
 async function findAgent(binary: string, env: NodeJS.ProcessEnv): Promise<string> {
@@ -391,7 +396,7 @@ async function execute(
     "--max-turns",
     "24",
     "--max-budget-usd",
-    "2",
+    String(options.agentAllowance),
     "--model",
     options.model,
     "-p",
@@ -409,6 +414,15 @@ async function execute(
   return { evidence, ok: child.exitCode === 0 && !child.timedOut && evidence.agentSucceeded };
 }
 
+function applicationCost(runs: Run[]): number | null {
+  return runs.every((run) => run.estimated_cost_usd !== null)
+    ? runs.reduce(
+        (sum, run) => sum + Math.max(run.estimated_cost_usd ?? 0, run.reported_cost_usd),
+        0,
+      )
+    : null;
+}
+
 export async function main(args = process.argv.slice(2), env = process.env): Promise<void> {
   const options = harnessOptions(args, env);
   agentAuth(env);
@@ -421,23 +435,23 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
   let ledger: SpendLedger | undefined;
   let evidence: Evidence | undefined;
   try {
-    ledger = reserveSpend(await loadLedger(ledgerPath), suite, 2, 1);
+    ledger = reserveSpend(
+      await loadLedger(ledgerPath),
+      suite,
+      options.agentAllowance,
+      options.appAllowance,
+    );
     await saveJson(ledgerPath, ledger);
     const execution = await execute(options, env, cwd, suite);
     evidence = execution.evidence;
     if (!execution.ok) throw new Error("External agent did not finish successfully");
     const verification = await verify(options, env, join(cwd, "research.db"), evidence, suite);
-    const appCost = verification.runs.every((run) => run.estimated_cost_usd !== null)
-      ? verification.runs.reduce(
-          (sum, run) => sum + Math.max(run.estimated_cost_usd ?? 0, run.reported_cost_usd),
-          0,
-        )
-      : null;
+    const appCost = applicationCost(verification.runs);
     ledger = accountSpend(ledger, suite, {
       agentSucceeded: true,
       agentCostUsd:
         options.agentProvider === "openrouter"
-          ? Math.max(2, evidence.agentCostUsd ?? 0)
+          ? Math.max(options.agentAllowance, evidence.agentCostUsd ?? 0)
           : evidence.agentCostUsd,
       appSucceeded: true,
       appCostUsd: appCost,
@@ -450,12 +464,12 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
           suite,
           transport: options.transport,
           agentProvider: options.agentProvider,
+          allowances: { agentUsd: options.agentAllowance, appUsd: options.appAllowance },
           targets: options.targets,
           evidence,
           ...verification,
           spend: ledger,
-          budgetNote:
-            "Local reported/estimated accounting is not a vendor charge guarantee; failed or unknown outcomes retain full allowances. OpenRouter agents retain at least their full $2 allowance because CLI pricing can differ from gateway billing.",
+          budgetNote: `Local reported/estimated accounting is not a vendor charge guarantee; failed or unknown outcomes retain full allowances. OpenRouter agents retain at least their full $${options.agentAllowance} allowance because CLI pricing can differ from gateway billing.`,
         },
         secretValues(env),
       ),

@@ -318,13 +318,35 @@ it("runs deterministic CLI fixtures through HTTP verification and persists faile
     expect(gatewayReport.agentProvider).toBe("openrouter");
     expect(gatewayReport.evidence.agentCostUsd).toBe(0.04);
     expect(gatewayEntry.chargedUsd).toBeCloseTo(2.01);
+    expect(gatewayReport.allowances).toEqual({ agentUsd: 2, appUsd: 1 });
+    await writeFile(
+      cli,
+      `#!${process.execPath}\nconst fs=require("node:fs");const args=process.argv;const budget=args[args.indexOf("--max-budget-usd")+1];const prompt=args[args.indexOf("-p")+1];const ledger=JSON.parse(fs.readFileSync(${JSON.stringify(join(artifactDir, "cumulative-spend.json"))},"utf8"));const entry=ledger.entries.at(-1);if(budget!=="0.4"||!prompt.includes('"max_estimated_cost_usd":0.2')||!prompt.includes("exceeds $0.2")||entry.agentAllowance!==0.4||entry.appAllowance!==0.2)process.exit(9);process.stdout.write(${JSON.stringify(transcript(events))});\n`,
+    );
+    await main(args, {
+      ...env,
+      E2E_AGENT_PROVIDER: "openrouter",
+      OPENROUTER_API_KEY: "fixture-router-token",
+      E2E_AGENT_BUDGET_USD: "0.4",
+      E2E_APP_BUDGET_USD: "0.2",
+    });
+    ledger = JSON.parse(await readFile(join(artifactDir, "cumulative-spend.json"), "utf8"));
+    expect(ledger.spentUsd).toBeCloseTo(2.47);
+    const customEntry = ledger.entries.at(-1);
+    expect(customEntry).toMatchObject({ agentAllowance: 0.4, appAllowance: 0.2 });
+    expect(customEntry.chargedUsd).toBeCloseTo(0.41);
+    const customReport = JSON.parse(
+      await readFile(join(artifactDir, `${customEntry.id}.report.json`), "utf8"),
+    );
+    expect(customReport.allowances).toEqual({ agentUsd: 0.4, appUsd: 0.2 });
+    expect(customReport.budgetNote).toContain("$0.4 allowance");
     await writeFile(
       cli,
       `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript([{ type: "result", total_cost_usd: 3, is_error: true }]))});\n`,
     );
     await expect(main(args, env)).rejects.toThrow(/agent did not finish/i);
     ledger = JSON.parse(await readFile(join(artifactDir, "cumulative-spend.json"), "utf8"));
-    expect(ledger.spentUsd).toBeCloseTo(6.06);
+    expect(ledger.spentUsd).toBeCloseTo(6.47);
     expect((await readdir(artifactDir)).some((name) => name.endsWith(".lock"))).toBe(false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -434,4 +456,80 @@ it("rejects unknown agent providers and missing OpenRouter authentication before
       ANTHROPIC_API_KEY: "wrong-provider",
     }),
   ).rejects.toThrow(/OPENROUTER_API_KEY/);
+});
+
+it("uses default and reduced positive spend allowances without raising reservation caps", async () => {
+  const { harnessOptions } = await import("../scripts/e2e-real-agent.js");
+  const env = { OPENSENPAI_LIVE_TESTS: "1", E2E_TARGETS: "router-exa" };
+  const defaults = harnessOptions([], env);
+  expect(defaults).toMatchObject({ agentAllowance: 2, appAllowance: 1 });
+  expect(
+    reserveSpend(
+      { spentUsd: 0, entries: [] },
+      "default",
+      defaults.agentAllowance,
+      defaults.appAllowance,
+    ).spentUsd,
+  ).toBe(3);
+  const custom = harnessOptions([], {
+    ...env,
+    E2E_AGENT_BUDGET_USD: "0.5",
+    E2E_APP_BUDGET_USD: "0.25",
+  });
+  expect(custom).toMatchObject({ agentAllowance: 0.5, appAllowance: 0.25 });
+  const reserved = reserveSpend(
+    { spentUsd: 8.2229494, entries: [] },
+    "custom",
+    custom.agentAllowance,
+    custom.appAllowance,
+  );
+  expect(reserved.spentUsd).toBeCloseTo(8.9729494);
+  expect(reserved.entries[0]).toMatchObject({ agentAllowance: 0.5, appAllowance: 0.25 });
+  expect(() =>
+    reserveSpend(
+      { spentUsd: 8.2229494, entries: [] },
+      "default",
+      defaults.agentAllowance,
+      defaults.appAllowance,
+    ),
+  ).toThrow(/budget/i);
+});
+it.each(["0", "-0.1", "NaN", "Infinity", "", "2.0001"])(
+  "rejects invalid agent allowance %j before dispatch",
+  async (value) => {
+    const { harnessOptions } = await import("../scripts/e2e-real-agent.js");
+    expect(() =>
+      harnessOptions([], {
+        OPENSENPAI_LIVE_TESTS: "1",
+        E2E_TARGETS: "router-exa",
+        E2E_AGENT_BUDGET_USD: value,
+      }),
+    ).toThrow(/E2E_AGENT_BUDGET_USD/);
+  },
+);
+it.each(["0", "-0.1", "NaN", "Infinity", "", "1.0001"])(
+  "rejects invalid application allowance %j before dispatch",
+  async (value) => {
+    const { harnessOptions } = await import("../scripts/e2e-real-agent.js");
+    expect(() =>
+      harnessOptions([], {
+        OPENSENPAI_LIVE_TESTS: "1",
+        E2E_TARGETS: "router-exa",
+        E2E_APP_BUDGET_USD: value,
+      }),
+    ).toThrow(/E2E_APP_BUDGET_USD/);
+  },
+);
+
+it.each([
+  [0, 1],
+  [2, 0],
+  [-0.1, 1],
+  [Number.NaN, 1],
+  [2.0001, 1],
+  [2, 1.0001],
+])("rejects invalid spend reservations agent=%s app=%s", (agent, app) => {
+  expect(() => reserveSpend({ spentUsd: 0, entries: [] }, "invalid", agent, app)).toThrow(
+    /invalid/i,
+  );
 });
