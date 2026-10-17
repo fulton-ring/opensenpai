@@ -148,6 +148,7 @@ export interface RetrievalBundle {
 
 export interface Observation {
   id: string;
+  workspace_id: string;
   run_id: string;
   ordinal: number;
   prompt: Prompt;
@@ -169,6 +170,7 @@ export interface Observation {
 
 export interface RunRecord {
   id: string;
+  workspace_id: string;
   input: RunInput;
   status: RunStatus;
   cancel_requested: boolean;
@@ -211,6 +213,19 @@ export interface ProviderInput {
   locale: string;
   retrieval?: RetrievalBundle;
   signal: AbortSignal;
+}
+
+export interface SpendAuthorization {
+  workspace_id: string;
+  run_id: string;
+  observation_id: string;
+  attempt_id: string;
+  estimated_cost_usd: number | null;
+}
+
+export interface ExecutionHooks {
+  authorize?: (attempt: SpendAuthorization) => Promise<void>;
+  settled?: (attempt: SpendAuthorization, outcome: ObservationStatus, usage: Usage | null) => Promise<void>;
 }
 
 export interface RetrievalRecord {
