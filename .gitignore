@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.mastra/
+.wrangler/
+.worktrees/
+data/
+artifacts/
+coverage/
+*.log
+.DS_Store

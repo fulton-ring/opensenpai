@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+.git
+.worktrees
+node_modules
+dist
+.mastra
+.wrangler
+data
+artifacts
+coverage
