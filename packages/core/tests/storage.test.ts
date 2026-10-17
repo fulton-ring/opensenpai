@@ -545,3 +545,56 @@ it("resets only pending workspace queue flags for combined-process startup repai
   expect(await b.listUnqueued()).toEqual([]);
   expect((await a.getObservation(running.id))?.status).toBe("running");
 });
+
+it("continues run pages across equal creation timestamps with a composite cursor", async () => {
+  const a = await store();
+  for (let index = 0; index < 3; index++)
+    await a.createRun({ ...input, idempotency_key: `page-${index}` }, [target], estimate);
+  const first = await a.listRunPage({ limit: 1 });
+  const seen = [...first.runs];
+  let cursor = first.next_cursor;
+  while (cursor) {
+    const page = await a.listRunPage({ limit: 1, cursor });
+    seen.push(...page.runs);
+    cursor = page.next_cursor;
+  }
+  expect(seen).toHaveLength(3);
+  expect(new Set(seen.map((run) => run.id)).size).toBe(3);
+  expect(await a.listRuns({ before: new Date(now + 1).toISOString() })).toHaveLength(3);
+  await expect(a.listRunPage({ cursor: "malformed" })).rejects.toMatchObject({
+    code: "INVALID_CURSOR",
+  });
+});
+
+it("settles a budget-denied pending observation without creating a paid attempt", async () => {
+  const a = await store();
+  const { run } = await a.createRun(
+    { ...input, repetitions: 2, max_estimated_cost_usd: 0.2 },
+    [target],
+    {
+      ...estimate,
+      total_observations: 2,
+      observations: [
+        { prompt_id: "p", target_id: "t", repetition: 0, estimated_cost_usd: 0.1 },
+        { prompt_id: "p", target_id: "t", repetition: 1, estimated_cost_usd: 0.1 },
+      ],
+    },
+  );
+  const [first, second] = (await a.getResults({ run_id: run.id })).observations;
+  if (!first || !second) throw new Error("Missing observations");
+  const claim = await a.claim(first.id, "a");
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  await a.succeed(first.id, claim.attempt_id, {
+    ...result,
+    usage: { ...result.usage, reported_cost_usd: 0.15 },
+  });
+  expect(await a.claim(second.id, "a")).toBeNull();
+  expect(await a.getObservation(second.id)).toMatchObject({
+    status: "failed",
+    attempt_id: null,
+    error: { code: "BUDGET_EXCEEDED" },
+  });
+  expect((await a.getRun(run.id))?.status).toBe("partial");
+  expect(await a.listPending()).toEqual([]);
+  expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(1);
+});

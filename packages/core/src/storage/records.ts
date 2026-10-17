@@ -126,3 +126,21 @@ export async function selectData<T>(
     }),
   );
 }
+
+export function readRunCursor(cursor: string): [string, string] {
+  try {
+    const value: unknown = JSON.parse(decodeURIComponent(cursor));
+    if (
+      !Array.isArray(value) ||
+      value.length !== 2 ||
+      typeof value[0] !== "string" ||
+      typeof value[1] !== "string" ||
+      !Number.isFinite(Date.parse(value[0])) ||
+      !value[1]
+    )
+      throw new Error("Invalid run cursor");
+    return [value[0], value[1]];
+  } catch {
+    throw new ResearchError("INVALID_CURSOR", "Run cursor is invalid");
+  }
+}

@@ -19,6 +19,7 @@ import {
   counts,
   newObservations,
   newRun,
+  readRunCursor,
   selectData,
   status,
   writeObservation,
@@ -32,6 +33,7 @@ export interface RunListQuery {
   project?: string;
   limit?: number;
   before?: string;
+  cursor?: string;
 }
 export interface ToolCall {
   tool: string;
@@ -148,6 +150,11 @@ export class ResearchStore {
     return this.observation(this.client, id);
   }
   async listRuns(query: RunListQuery = {}): Promise<RunRecord[]> {
+    return (await this.listRunPage(query)).runs;
+  }
+  async listRunPage(
+    query: RunListQuery = {},
+  ): Promise<{ runs: RunRecord[]; next_cursor: string | null }> {
     const clauses = ["AND 1=1"];
     const args: InValue[] = [];
     if (query.project) {
@@ -158,7 +165,13 @@ export class ResearchStore {
       clauses.push("AND json_extract(data,'$.created_at')<?");
       args.push(query.before);
     }
-    args.push(Math.max(1, Math.min(query.limit ?? 50, 100)));
+    if (query.cursor) {
+      const [createdAt, id] = readRunCursor(query.cursor);
+      clauses.push("AND (json_extract(data,'$.created_at'),id)<(?,?)");
+      args.push(createdAt, id);
+    }
+    const limit = Math.max(1, Math.min(query.limit ?? 50, 100));
+    args.push(limit + 1);
     const rows = await selectData<RunRecord>(
       this.client,
       "app_runs",
@@ -166,7 +179,16 @@ export class ResearchStore {
       `${clauses.join(" ")} ORDER BY json_extract(data,'$.created_at') DESC,id DESC LIMIT ?`,
       args,
     );
-    return Promise.all(rows.map(async (row) => (await this.getRun(row.id)) ?? row));
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    const runs = await Promise.all(page.map(async (row) => (await this.getRun(row.id)) ?? row));
+    return {
+      runs,
+      next_cursor:
+        rows.length > limit && last
+          ? encodeURIComponent(JSON.stringify([last.created_at, last.id]))
+          : null,
+    };
   }
   async getResults(query: ResultQuery) {
     const rows = (await this.observations(this.client, query.run_id)).filter(
@@ -252,7 +274,19 @@ export class ResearchStore {
       if (row?.status !== "pending") return null;
       const run = await this.run(tx, row.run_id);
       const attemptId = crypto.randomUUID();
-      if (!run || !(await this.reserve(tx, attemptId, run, row.estimated_cost_usd))) return null;
+      if (!run || run.cancel_requested) return null;
+      if (!(await this.reserve(tx, attemptId, run, row.estimated_cost_usd))) {
+        row.status = "failed";
+        row.updated_at = this.now();
+        row.error = {
+          code: "BUDGET_EXCEEDED",
+          message: "Run budget cannot reserve this observation",
+          retryable: false,
+        };
+        await writeObservation(tx, row);
+        await this.touchRun(tx, row.run_id);
+        return null;
+      }
       Object.assign(row, {
         status: "running",
         owner,
