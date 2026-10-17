@@ -498,3 +498,21 @@ it("reconciles a late failed response for its uncertain attempt once", async () 
     1,
   );
 });
+
+it("filters unpublished outbox rows by run before applying the page limit", async () => {
+  const a = await store();
+  await observation(a);
+  const { run } = await a.createRun(
+    { ...input, idempotency_key: "another-run" },
+    [target],
+    estimate,
+  );
+  const rows = await a.listUnqueued(1, run.id);
+  expect(rows).toHaveLength(1);
+  expect(rows[0]?.run_id).toBe(run.id);
+  const row = rows[0];
+  if (!row) throw new Error("Missing observation");
+  await a.markQueued(row.id);
+  expect(await a.listUnqueued(1, run.id)).toEqual([]);
+  expect(await a.listUnqueued(1)).toHaveLength(1);
+});

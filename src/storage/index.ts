@@ -192,16 +192,18 @@ export class ResearchStore {
   async listPending(limit = 100) {
     return this.pending(limit, false);
   }
-  async listUnqueued(limit = 100) {
-    return this.pending(limit, true);
+  async listUnqueued(limit = 100, runId?: string) {
+    return this.pending(limit, true, runId);
   }
-  private async pending(limit: number, unqueued: boolean) {
+  private async pending(limit: number, unqueued: boolean, runId?: string) {
+    const args: InValue[] = runId ? [runId] : [];
+    args.push(Math.max(1, Math.min(limit, 1000)));
     return selectData<Observation>(
       this.client,
       "app_observations",
       this.workspaceId,
-      `AND json_extract(data,'$.status')='pending' ${unqueued ? "AND queued=0" : ""} ORDER BY rowid LIMIT ?`,
-      [Math.max(1, Math.min(limit, 1000))],
+      `AND json_extract(data,'$.status')='pending' ${unqueued ? "AND queued=0" : ""} ${runId ? "AND run_id=?" : ""} ORDER BY rowid LIMIT ?`,
+      args,
     );
   }
   async markQueued(id: string) {
