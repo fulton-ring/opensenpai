@@ -73,7 +73,8 @@ export class Runtime {
     if (this.started) return;
     this.started = true;
     await this.mastra.getStorage()?.init();
-    if (this.options.role !== "api") await this.options.store.recoverExpired();
+    if (this.options.role !== "api" || this.options.dispatchMode === "external")
+      await this.options.store.recoverExpired();
     if (!this.options.directOnly && this.options.role !== "api")
       await this.mastra.startWorkers("orchestration");
     if (!this.options.directOnly && this.options.dispatchMode !== "external") {
@@ -125,6 +126,7 @@ export class Runtime {
   async executeObservation(id: string) {
     if (this.options.role === "api" && this.options.dispatchMode !== "external") return;
     await this.mastra.getStorage()?.init();
+    if (this.options.dispatchMode === "external") await this.options.store.recoverExpired();
     const run = await this.mastra.getWorkflow("observationDirect").createRun();
     const outcome = await run.start({ inputData: { id } });
     if (outcome.status === "failed") throw outcome.error;

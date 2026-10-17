@@ -41,6 +41,14 @@ function failure(error: unknown): Failure {
     retryable: false,
   };
 }
+// Only idempotent persistence is retried; paid operations never enter this helper.
+async function persistEvidence(write: () => Promise<void>): Promise<void> {
+  try {
+    await write();
+  } catch {
+    await write();
+  }
+}
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -213,7 +221,13 @@ export class ObservationExecutor {
     );
     attempt.providerCall = providerCall;
     attempt.result = await bounded(providerCall, controller.signal);
-    await this.options.store.succeed(observation.id, authorization.attempt_id, attempt.result);
+    await persistEvidence(() =>
+      this.options.store.succeed(
+        observation.id,
+        authorization.attempt_id,
+        attempt.result as ProviderResult,
+      ),
+    );
     attempt.terminal = "succeeded";
   }
   private async persistFailure(attempt: Attempt, error: unknown) {
@@ -221,7 +235,7 @@ export class ObservationExecutor {
     const cancelled = error instanceof ResearchError && error.code === "cancelled";
     attempt.terminal =
       attempt.dispatched && !known ? "unknown_outcome" : cancelled ? "cancelled" : "failed";
-    attempt.result = responseFromError(error);
+    attempt.result = responseFromError(error) ?? attempt.result;
     await this.options.store.fail(
       attempt.observation.id,
       attempt.authorization.attempt_id,
@@ -284,6 +298,7 @@ export class ObservationExecutor {
     if (search.mode !== "controlled")
       throw new ResearchError("invalid_retrieval", "Controlled search is required");
     let call: Promise<RetrievalBundle> | undefined;
+    let bundle: RetrievalBundle | undefined;
     try {
       const retrieve =
         this.options.retrieveExa ?? (await import("../providers/index.js")).retrieveExa;
@@ -298,11 +313,12 @@ export class ObservationExecutor {
         },
         this.options.env,
       );
-      const bundle = await bounded(call, signal);
-      await store.finishRetrieval(bundle, this.owner, observation.run_id);
+      bundle = await bounded(call, signal);
+      const completed = bundle;
+      await persistEvidence(() => store.finishRetrieval(completed, this.owner, observation.run_id));
       return bundle;
     } catch (error) {
-      await store.failRetrieval(id, this.owner, failure(error), !knownRejection(error));
+      await store.failRetrieval(id, this.owner, failure(error), !knownRejection(error), bundle);
       if (call && signal.aborted)
         void call
           .then((bundle) => store.finishRetrieval(bundle, this.owner, observation.run_id))

@@ -41,7 +41,13 @@ export interface RuntimeStore {
     estimatedCost: number,
   ): Promise<boolean>;
   finishRetrieval(bundle: RetrievalBundle, owner: string, runId: string): Promise<void>;
-  failRetrieval(id: string, owner: string, error: Failure, unknown: boolean): Promise<void>;
+  failRetrieval(
+    id: string,
+    owner: string,
+    error: Failure,
+    unknown: boolean,
+    partialBundle?: RetrievalBundle,
+  ): Promise<void>;
 }
 export interface RuntimeOptions {
   store: RuntimeStore;
