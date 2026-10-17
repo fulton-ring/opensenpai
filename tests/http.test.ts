@@ -12,7 +12,11 @@ afterEach(async () => {
       server.close(() => resolve());
     });
 });
-async function setup(status = "succeeded", role: "all" | "api" | "worker" = "all") {
+async function setup(
+  status = "succeeded",
+  role: "all" | "api" | "worker" = "all",
+  executeThrows = false,
+) {
   let calls = 0;
   const options = {
     mcpToken: token,
@@ -46,6 +50,7 @@ async function setup(status = "succeeded", role: "all" | "api" | "worker" = "all
     runtime: {
       async executeObservation() {
         calls++;
+        if (executeThrows) throw new Error("provider runtime error with secret details");
       },
     },
   } as unknown as HttpOptions;
@@ -93,7 +98,7 @@ describe("HTTP authentication and queue durability", () => {
   it.each(["pending", "running"])(
     "does not acknowledge nonterminal %s observations",
     async (status) => {
-      const test = await setup(status);
+      const test = await setup(status, "all", true);
       const response = await fetch(`${test.url}/internal/observations/o/execute`, {
         method: "POST",
         headers: auth(internal),
@@ -130,7 +135,7 @@ describe("HTTP authentication and queue durability", () => {
   it.each(["failed", "cancelled", "unknown_outcome"])(
     "acknowledges durable terminal %s even when execution reports an error",
     async (status) => {
-      const test = await setup(status);
+      const test = await setup(status, "all", true);
       const response = await fetch(`${test.url}/internal/observations/o/execute`, {
         method: "POST",
         headers: auth(internal),
