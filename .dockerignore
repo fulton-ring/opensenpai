@@ -1,5 +1,7 @@
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
 .git
 .worktrees
@@ -13,6 +15,9 @@ dist
 .pnpm-store
 .mastra
 .wrangler
+**/.mastra
+**/.wrangler
+**/coverage
 data
 artifacts
 coverage
