@@ -364,7 +364,7 @@ export class ResearchStore {
     });
     if (
       previous.rows[0]?.outcome !== "unknown_outcome" ||
-      !["succeeded", "failed", "cancelled"].includes(outcome)
+      (!["succeeded", "failed", "cancelled"].includes(outcome) && usage === null)
     )
       return false;
     const corrected = await tx.execute({
@@ -607,13 +607,21 @@ export class ResearchStore {
       args: [JSON.stringify(row), this.workspaceId, row.id],
     });
   }
-  async failRetrieval(id: string, owner: string, error: Failure, unknown: boolean): Promise<void> {
+  async failRetrieval(
+    id: string,
+    owner: string,
+    error: Failure,
+    unknown: boolean,
+    partialBundle?: RetrievalBundle,
+  ): Promise<void> {
     await this.transaction(async (tx) => {
       const row = (
         await selectData<RetrievalRecord>(tx, "app_retrievals", this.workspaceId, "AND id=?", [id])
       )[0];
-      if (row?.status !== "running" || row.owner !== owner) return;
-      await this.retrievalFailure(tx, row, error, unknown);
+      const lateEvidence =
+        row?.status === "unknown_outcome" && row.bundle === null && partialBundle !== undefined;
+      if (!row || (row.status !== "running" && !lateEvidence) || row.owner !== owner) return;
+      await this.retrievalFailure(tx, row, error, unknown, partialBundle);
     });
   }
   private async retrievalFailure(
@@ -621,6 +629,7 @@ export class ResearchStore {
     row: RetrievalRecord,
     error: Failure,
     unknown: boolean,
+    partialBundle?: RetrievalBundle,
   ) {
     const data = await tx.execute({
       sql: "SELECT run_id FROM app_retrievals WHERE workspace_id=? AND id=?",
@@ -628,15 +637,17 @@ export class ResearchStore {
     });
     row.status = unknown ? "unknown_outcome" : "failed";
     row.error = error;
+    row.bundle = partialBundle ?? row.bundle;
+    const actual = partialBundle?.reported_cost_usd ?? null;
     await this.writeRetrieval(tx, row);
     await this.settle(
       tx,
       `retrieval:${row.id}`,
       String(data.rows[0]?.run_id),
       row.status,
-      null,
-      false,
-      null,
+      actual,
+      actual !== null,
+      partialBundle ?? null,
     );
   }
   async recordToolCall(tool: string, runId?: string): Promise<void> {

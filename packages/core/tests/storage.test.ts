@@ -665,3 +665,79 @@ it("omits bulky source context from compact results while preserving full persis
   ).toEqual(evidence);
   expect((await a.getObservation(item.id))?.result).toEqual(evidence);
 });
+
+it("preserves a completed retrieval bundle and actual cost through failure fallback", async () => {
+  const a = await store();
+  const item = await observation(a);
+  await a.claimRetrieval("fallback-bundle", item.run_id, "a", 100, 0.02);
+  const bundle = {
+    id: "fallback-bundle",
+    queries: ["q"],
+    sources: [{ url: "https://example.com", text: "Full context" }],
+    context: "Full context",
+    raw_response: { request_id: "completed-response" },
+    estimated_cost_usd: 0.02,
+    reported_cost_usd: 0.01,
+    created_at: new Date(now).toISOString(),
+  };
+  const failure = {
+    code: "PERSISTENCE_FAILED",
+    message: "Finalization write failed",
+    retryable: false,
+  };
+  await a.failRetrieval(bundle.id, "a", failure, true, bundle);
+  await a.failRetrieval(bundle.id, "a", failure, true, { ...bundle, reported_cost_usd: 99 });
+  expect(await a.getRetrieval(bundle.id)).toMatchObject({
+    status: "unknown_outcome",
+    bundle,
+    error: failure,
+  });
+  expect(await a.getRun(item.run_id)).toMatchObject({
+    reported_cost_usd: 0.01,
+    reserved_cost_usd: 0,
+  });
+  expect(
+    JSON.parse(String((await a.client.execute("SELECT data FROM app_usage")).rows[0]?.data)),
+  ).toMatchObject({ usage: bundle, reported_cost_usd: 0.01 });
+});
+
+it("preserves late retrieval evidence once after its lease became uncertain", async () => {
+  const a = await store();
+  const item = await observation(a);
+  await a.claimRetrieval("late-fallback", item.run_id, "a", 1, 0.02);
+  now += 2;
+  await a.recoverExpired();
+  const bundle = {
+    id: "late-fallback",
+    queries: ["q"],
+    sources: [],
+    context: "late",
+    raw_response: { evidence: true },
+    estimated_cost_usd: 0.02,
+    reported_cost_usd: 0.01,
+    created_at: new Date(now).toISOString(),
+  };
+  await a.failRetrieval(
+    bundle.id,
+    "wrong-owner",
+    { code: "FAILED", message: "failed", retryable: false },
+    true,
+    bundle,
+  );
+  expect((await a.getRetrieval(bundle.id))?.bundle).toBeNull();
+  await a.failRetrieval(
+    bundle.id,
+    "a",
+    { code: "FAILED", message: "failed", retryable: false },
+    true,
+    bundle,
+  );
+  expect((await a.getRetrieval(bundle.id))?.bundle).toEqual(bundle);
+  expect(await a.getRun(item.run_id)).toMatchObject({
+    reported_cost_usd: 0.01,
+    reserved_cost_usd: 0,
+  });
+  expect((await a.client.execute("SELECT data FROM app_usage_reconciliations")).rows).toHaveLength(
+    1,
+  );
+});
