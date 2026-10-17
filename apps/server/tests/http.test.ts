@@ -16,6 +16,7 @@ async function setup(
   status = "succeeded",
   role: "all" | "api" | "worker" = "all",
   executeThrows = false,
+  storageFails = false,
 ) {
   let calls = 0;
   const options = {
@@ -40,6 +41,7 @@ async function setup(
         return { observations: [], next_cursor: null };
       },
       async listUnqueued() {
+        if (storageFails) throw new Error("SECRET_DATABASE_TOKEN connection rejected");
         return [{ id: "o" }];
       },
       async markQueued() {},
@@ -150,5 +152,21 @@ describe("HTTP authentication and queue durability", () => {
     expect((await fetch(`${test.url}/health`, { headers: auth(internal) })).status).toBe(200);
     expect((await fetch(`${test.url}/mcp`, { headers: auth(token) })).status).toBe(404);
     expect(test.calls()).toBe(0);
+  });
+  it("reports public readiness only when the durable store is available", async () => {
+    const healthy = await setup();
+    const response = await fetch(`${healthy.url}/ready`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "ready", role: "all" });
+    const unhealthy = await setup("succeeded", "all", false, true);
+    const failure = await fetch(`${unhealthy.url}/ready`);
+    expect(failure.status).toBe(503);
+    expect(await failure.text()).not.toContain("SECRET_DATABASE_TOKEN");
+  });
+  it("requires internal authentication for worker readiness", async () => {
+    const worker = await setup("succeeded", "worker");
+    expect((await fetch(`${worker.url}/ready`)).status).toBe(401);
+    expect((await fetch(`${worker.url}/ready`, { headers: auth(token) })).status).toBe(401);
+    expect((await fetch(`${worker.url}/ready`, { headers: auth(internal) })).status).toBe(200);
   });
 });

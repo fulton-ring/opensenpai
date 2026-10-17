@@ -81,8 +81,8 @@ async function handle(
   const url = requestUrl(req, res, hosts, origins);
   if (!url) return;
   if (!limitBody(req, res)) return;
-  if (req.method === "GET" && url.pathname === "/health") {
-    return health(options, req, res);
+  if (req.method === "GET" && ["/health", "/ready"].includes(url.pathname)) {
+    return health(options, req, res, url.pathname === "/ready");
   }
   const execution = url.pathname.startsWith("/internal/observations/");
   if (!authorized(req, execution ? options.internalToken : options.mcpToken))
@@ -218,8 +218,22 @@ function requestUrl(req: IncomingMessage, res: ServerResponse, hosts: string[], 
   return url;
 }
 
-function health(options: HttpOptions, req: IncomingMessage, res: ServerResponse) {
+async function health(
+  options: HttpOptions,
+  req: IncomingMessage,
+  res: ServerResponse,
+  readiness: boolean,
+) {
   if (options.role === "worker" && !authorized(req, options.internalToken))
     return json(res, 401, { error: { code: "UNAUTHORIZED" } });
-  return json(res, 200, { status: "ok", role: options.role });
+  if (readiness) {
+    try {
+      await options.store.listUnqueued(1);
+    } catch {
+      return json(res, 503, {
+        error: { code: "NOT_READY", message: "Durable storage is unavailable. Retry shortly." },
+      });
+    }
+  }
+  return json(res, 200, { status: readiness ? "ready" : "ok", role: options.role });
 }
