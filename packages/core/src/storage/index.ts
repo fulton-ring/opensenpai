@@ -549,7 +549,10 @@ export class ResearchStore {
       if ((await selectData(tx, "app_retrievals", this.workspaceId, "AND id=?", [id])).length)
         return false;
       const run = await this.run(tx, runId);
-      if (!run || !(await this.reserve(tx, `retrieval:${id}`, run, estimatedCost))) return false;
+      if (!run) throw new ResearchError("RUN_NOT_FOUND", "Retrieval run does not exist");
+      if (run.cancel_requested) throw new ResearchError("cancelled", "Retrieval run was cancelled");
+      if (!(await this.reserve(tx, `retrieval:${id}`, run, estimatedCost)))
+        throw new ResearchError("BUDGET_EXCEEDED", "Run budget cannot reserve this retrieval");
       const record: RetrievalRecord = {
         id,
         status: "running",

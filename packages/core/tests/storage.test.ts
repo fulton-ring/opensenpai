@@ -217,7 +217,9 @@ it("uses immutable retrieval ownership and accounts a bundle exactly once", asyn
 it("never repeats failed or ambiguous retrieval, and enforces reserved budgets", async () => {
   const a = await store();
   const item = await observation(a);
-  expect(await a.claimRetrieval("large", item.run_id, "a", 100, 2)).toBe(false);
+  await expect(a.claimRetrieval("large", item.run_id, "a", 100, 2)).rejects.toMatchObject({
+    code: "BUDGET_EXCEEDED",
+  });
   expect(await a.claimRetrieval("failed", item.run_id, "a", 100, 0.2)).toBe(true);
   await a.failRetrieval("failed", "a", { code: "FAIL", message: "failed", retryable: true }, false);
   expect(await a.claimRetrieval("failed", item.run_id, "a", 100, 0.2)).toBe(false);
@@ -471,7 +473,9 @@ it("retains failed retrieval estimates when actual charges remain unknown", asyn
     false,
   );
   expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0.7);
-  expect(await a.claimRetrieval("next-retrieval", item.run_id, "a", 100, 0.6)).toBe(false);
+  await expect(
+    a.claimRetrieval("next-retrieval", item.run_id, "a", 100, 0.6),
+  ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
 });
 
 it("reconciles a late failed response for its uncertain attempt once", async () => {
@@ -597,4 +601,20 @@ it("settles a budget-denied pending observation without creating a paid attempt"
   expect((await a.getRun(run.id))?.status).toBe("partial");
   expect(await a.listPending()).toEqual([]);
   expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(1);
+});
+
+it("fails retrieval budget authorization immediately without a claim or paid attempt", async () => {
+  const a = await store();
+  const item = await observation(a);
+  await expect(a.claimRetrieval("denied", item.run_id, "a", 100, 2)).rejects.toMatchObject({
+    code: "BUDGET_EXCEEDED",
+  });
+  expect(await a.getRetrieval("denied")).toBeNull();
+  expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(0);
+  await a.cancelRun(item.run_id);
+  await expect(a.claimRetrieval("cancelled", item.run_id, "a", 100, 0.1)).rejects.toMatchObject({
+    code: "cancelled",
+  });
+  expect(await a.getRetrieval("cancelled")).toBeNull();
+  expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(0);
 });
