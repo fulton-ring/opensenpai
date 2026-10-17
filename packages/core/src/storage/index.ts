@@ -364,7 +364,7 @@ export class ResearchStore {
     });
     if (
       previous.rows[0]?.outcome !== "unknown_outcome" ||
-      (!["succeeded", "failed", "cancelled"].includes(outcome) && usage === null)
+      (!["succeeded", "failed", "cancelled", "not_dispatched"].includes(outcome) && usage === null)
     )
       return false;
     const corrected = await tx.execute({
@@ -613,15 +613,18 @@ export class ResearchStore {
     error: Failure,
     unknown: boolean,
     partialBundle?: RetrievalBundle,
+    notDispatched = false,
   ): Promise<void> {
     await this.transaction(async (tx) => {
       const row = (
         await selectData<RetrievalRecord>(tx, "app_retrievals", this.workspaceId, "AND id=?", [id])
       )[0];
       const lateEvidence =
-        row?.status === "unknown_outcome" && row.bundle === null && partialBundle !== undefined;
+        row?.status === "unknown_outcome" &&
+        row.bundle === null &&
+        (partialBundle !== undefined || notDispatched);
       if (!row || (row.status !== "running" && !lateEvidence) || row.owner !== owner) return;
-      await this.retrievalFailure(tx, row, error, unknown, partialBundle);
+      await this.retrievalFailure(tx, row, error, unknown, partialBundle, notDispatched);
     });
   }
   private async retrievalFailure(
@@ -630,21 +633,23 @@ export class ResearchStore {
     error: Failure,
     unknown: boolean,
     partialBundle?: RetrievalBundle,
+    notDispatched = false,
   ) {
     const data = await tx.execute({
       sql: "SELECT run_id FROM app_retrievals WHERE workspace_id=? AND id=?",
       args: [this.workspaceId, row.id],
     });
-    row.status = unknown ? "unknown_outcome" : "failed";
+    const unbilled = notDispatched && partialBundle === undefined;
+    row.status = unknown && !unbilled ? "unknown_outcome" : "failed";
     row.error = error;
     row.bundle = partialBundle ?? row.bundle;
-    const actual = partialBundle?.reported_cost_usd ?? null;
+    const actual = unbilled ? 0 : (partialBundle?.reported_cost_usd ?? null);
     await this.writeRetrieval(tx, row);
     await this.settle(
       tx,
       `retrieval:${row.id}`,
       String(data.rows[0]?.run_id),
-      row.status,
+      unbilled ? "not_dispatched" : row.status,
       actual,
       actual !== null,
       partialBundle ?? null,

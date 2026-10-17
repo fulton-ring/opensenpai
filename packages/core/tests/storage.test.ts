@@ -741,3 +741,30 @@ it("preserves late retrieval evidence once after its lease became uncertain", as
     1,
   );
 });
+
+it("releases an explicitly undispatched retrieval reservation without inventing a bundle", async () => {
+  const a = await store();
+  const item = await observation(a);
+  await a.claimRetrieval("not-dispatched", item.run_id, "a", 100, 0.04);
+  const denied = {
+    code: "BILLING_DENIED",
+    message: "Retrieval authorization denied",
+    retryable: false,
+  };
+  await a.failRetrieval("not-dispatched", "a", denied, false, undefined, true);
+  expect(await a.getRetrieval("not-dispatched")).toMatchObject({
+    status: "failed",
+    bundle: null,
+    error: denied,
+  });
+  expect(await a.getRun(item.run_id)).toMatchObject({ reported_cost_usd: 0, reserved_cost_usd: 0 });
+  const usage = JSON.parse(
+    String((await a.client.execute("SELECT data FROM app_usage")).rows[0]?.data),
+  );
+  expect(usage).toMatchObject({
+    outcome: "not_dispatched",
+    usage: null,
+    estimated_cost_usd: 0.04,
+    reported_cost_usd: 0,
+  });
+});
