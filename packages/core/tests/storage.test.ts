@@ -618,3 +618,50 @@ it("fails retrieval budget authorization immediately without a claim or paid att
   expect(await a.getRetrieval("cancelled")).toBeNull();
   expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(0);
 });
+
+it("omits bulky source context from compact results while preserving full persisted evidence", async () => {
+  const a = await store();
+  const item = await observation(a);
+  const claim = await a.claim(item.id, "a");
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  const evidence: ProviderResult = {
+    ...result,
+    sources: [
+      {
+        url: "https://example.com",
+        title: "Source",
+        text: "Long retrieved source context",
+        metadata: { full_response: "Duplicated source context" },
+      },
+    ],
+    citations: [
+      {
+        url: "https://example.com",
+        title: "Citation",
+        start_index: 1,
+        end_index: 10,
+        cited_text: "Quoted evidence",
+        locator_units: "characters",
+        metadata: { native: "Bulky provider evidence" },
+      },
+    ],
+  };
+  await a.succeed(item.id, claim.attempt_id, evidence);
+  const compact = (await a.getResults({ run_id: item.run_id, include_raw: false })).observations[0]
+    ?.result;
+  expect(compact?.sources).toEqual([{ url: "https://example.com", title: "Source" }]);
+  expect(compact?.citations).toEqual([
+    {
+      url: "https://example.com",
+      title: "Citation",
+      start_index: 1,
+      end_index: 10,
+      cited_text: "Quoted evidence",
+      locator_units: "characters",
+    },
+  ]);
+  expect(
+    (await a.getResults({ run_id: item.run_id, include_raw: true })).observations[0]?.result,
+  ).toEqual(evidence);
+  expect((await a.getObservation(item.id))?.result).toEqual(evidence);
+});

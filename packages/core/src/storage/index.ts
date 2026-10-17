@@ -210,6 +210,11 @@ export class ResearchStore {
     if (!row.result) return;
     Reflect.deleteProperty(row.result, "raw_response");
     Reflect.deleteProperty(row.result.usage, "raw");
+    for (const source of row.result.sources) {
+      Reflect.deleteProperty(source, "text");
+      Reflect.deleteProperty(source, "metadata");
+    }
+    for (const citation of row.result.citations) Reflect.deleteProperty(citation, "metadata");
   }
   async listPending(limit = 100) {
     return this.pending(limit, false);
