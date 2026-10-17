@@ -8,6 +8,7 @@ import {
   type SpendAuthorization,
 } from "../contracts.js";
 import { EXA_ESTIMATED_COST_PER_QUERY } from "../targets.js";
+import { Concurrency, concurrencyLimit } from "./concurrency.js";
 import type { RuntimeOptions } from "./types.js";
 
 const safeBeforeDispatch = new Set([
@@ -73,10 +74,14 @@ interface Attempt {
 export class ObservationExecutor {
   private readonly active = new Map<string, Attempt>();
   private stopped = false;
+  private readonly shutdown = new AbortController();
+  private readonly concurrency: Concurrency;
   constructor(
     private readonly options: RuntimeOptions,
     private readonly owner: string,
-  ) {}
+  ) {
+    this.concurrency = new Concurrency(concurrencyLimit(options.maxConcurrent));
+  }
   cancel(runId: string) {
     for (const item of this.active.values())
       if (item.observation.run_id === runId)
@@ -84,12 +89,22 @@ export class ObservationExecutor {
   }
   stop() {
     this.stopped = true;
+    this.shutdown.abort(new ResearchError("runtime_stopped", "Runtime stopped"));
     for (const item of this.active.values())
       item.controller.abort(new ResearchError("runtime_stopped", "Runtime stopped"));
   }
   async execute(id: string, workflowSignal: AbortSignal): Promise<{ id: string }> {
     if ((this.options.role === "api" && this.options.dispatchMode !== "external") || this.stopped)
       return { id };
+    const signal = AbortSignal.any([workflowSignal, this.shutdown.signal]);
+    const release = await this.concurrency.acquire(signal);
+    try {
+      return await this.executeClaimed(id, signal);
+    } finally {
+      release();
+    }
+  }
+  private async executeClaimed(id: string, workflowSignal: AbortSignal): Promise<{ id: string }> {
     const observation = await this.options.store.claim(id, this.owner, 150_000);
     if (!observation?.attempt_id) return { id };
     const attempt: Attempt = {
@@ -116,13 +131,20 @@ export class ObservationExecutor {
       cleanup();
       this.active.delete(id);
     }
-    await this.options.hooks?.settled?.(
-      attempt.authorization,
-      attempt.terminal,
-      attempt.result?.usage ?? null,
-    );
     this.preserveLateResult(attempt);
+    await this.settle(attempt);
     return { id };
+  }
+  private async settle(attempt: Attempt) {
+    try {
+      await this.options.hooks?.settled?.(
+        attempt.authorization,
+        attempt.terminal,
+        attempt.result?.usage ?? null,
+      );
+    } catch (error) {
+      this.options.onError?.(error);
+    }
   }
   private monitor(attempt: Attempt, workflowSignal: AbortSignal) {
     const { controller, observation } = attempt;
@@ -219,16 +241,14 @@ export class ObservationExecutor {
             attempt.authorization.attempt_id,
             late,
           );
-          await this.options.hooks?.settled?.(attempt.authorization, "succeeded", late.usage);
+          attempt.terminal = "succeeded";
+          attempt.result = late;
+          await this.settle(attempt);
         },
         async (error) => {
           if (!responseFromError(error)) return;
           await this.persistFailure(attempt, error);
-          await this.options.hooks?.settled?.(
-            attempt.authorization,
-            attempt.terminal,
-            attempt.result?.usage ?? null,
-          );
+          await this.settle(attempt);
         },
       )
       .catch((error) => this.options.onError?.(error));

@@ -44,6 +44,8 @@ class Runtime {
   private readonly ownedPubsub: ValkeyStreamsPubSub | undefined;
   private started = false;
   private stopped = false;
+  private repairTimer?: ReturnType<typeof setInterval>;
+  private repairing?: Promise<void>;
   constructor(private readonly options: RuntimeOptions) {
     const owner = randomUUID();
     this.executor = new ObservationExecutor(options, owner);
@@ -75,11 +77,37 @@ class Runtime {
     if (!this.options.directOnly && this.options.role !== "api")
       await this.mastra.startWorkers("orchestration");
     if (!this.options.directOnly && this.options.dispatchMode !== "external") {
-      let pending = await this.options.store.listUnqueued(100);
-      while (pending.length) {
-        await this.dispatch(pending);
-        pending = await this.options.store.listUnqueued(100);
-      }
+      if (this.options.role === "all") await this.restoreLocalQueue();
+      await this.drain();
+      if (this.options.role !== "api")
+        this.repairTimer = setInterval(() => {
+          void this.repair();
+        }, this.options.repairIntervalMs ?? 5_000);
+    }
+  }
+  private async restoreLocalQueue() {
+    if (this.options.store.resetPendingQueue) await this.options.store.resetPendingQueue();
+    else await this.dispatch(await this.options.store.listPending(1000));
+  }
+  private async drain() {
+    for (let batch = 0; batch < 10 && !this.stopped; batch++) {
+      const pending = await this.options.store.listUnqueued(100);
+      if (!pending.length) return;
+      await this.dispatch(pending);
+    }
+  }
+  private async repair() {
+    if (this.stopped || this.repairing) return;
+    this.repairing = (async () => {
+      await this.options.store.recoverExpired();
+      await this.drain();
+    })();
+    try {
+      await this.repairing;
+    } catch (error) {
+      this.options.onError?.(error);
+    } finally {
+      this.repairing = undefined;
     }
   }
   async dispatch(observations: Observation[]) {
@@ -108,7 +136,9 @@ class Runtime {
   async stop() {
     if (this.stopped) return;
     this.stopped = true;
+    clearInterval(this.repairTimer);
     this.executor.stop();
+    if (this.repairing) await Promise.allSettled([this.repairing]);
     await this.mastra.shutdown({ drainTimeout: 1_000 });
     await this.ownedPubsub?.close();
   }

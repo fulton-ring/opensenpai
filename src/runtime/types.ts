@@ -18,6 +18,7 @@ export interface RuntimeStore {
   listPending(limit?: number): Promise<Observation[]>;
   listUnqueued(limit?: number): Promise<Observation[]>;
   markQueued(id: string): Promise<void>;
+  resetPendingQueue?(): Promise<unknown>;
   claim(id: string, owner: string, leaseMs?: number): Promise<Observation | null>;
   markDispatched(id: string, attemptId: string): Promise<boolean>;
   succeed(id: string, attemptId: string, result: ProviderResult): Promise<void>;
@@ -66,6 +67,8 @@ export interface RuntimeOptions {
   storage?: MastraCompositeStore;
   /** Tests may shorten this; production can never exceed 120 seconds. */
   timeoutMs?: number;
+  maxConcurrent?: number;
+  repairIntervalMs?: number;
   cancellationPollMs?: number;
   /** Queue consumers use only executeObservation; no native background workers. */
   directOnly?: boolean;

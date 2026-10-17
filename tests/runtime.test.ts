@@ -630,6 +630,143 @@ describe("runtime native workflows", () => {
     await until(() => store.observations.get("observation")?.status === "failed");
     expect(store.observations.get("observation")?.result).toEqual(partial);
   });
+  it("limits local paid concurrency to two before durable claim", async () => {
+    const store = new Store(Array.from({ length: 5 }, (_v, i) => observation(`o${i}`)));
+    let active = 0;
+    let maximum = 0;
+    const r = runtime(store, {
+      executeProvider: async () => {
+        active++;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        active--;
+        return result;
+      },
+    });
+    await Promise.all([...store.observations.keys()].map((id) => r.executeObservation(id)));
+    expect(maximum).toBe(2);
+  });
+  it("restores queued pending local observations after lost in-memory events", async () => {
+    const store = new Store();
+    store.queued.add("observation");
+    const r = runtime(store);
+    await r.start();
+    await until(() => store.observations.get("observation")?.status === "succeeded");
+  });
+  it("repairs a lease that expires after startup without replaying dispatched work", async () => {
+    const item = observation();
+    item.status = "running";
+    item.dispatched_at = new Date().toISOString();
+    item.lease_until = new Date(Date.now() + 10000).toISOString();
+    const store = new Store([item]);
+    let expired = false;
+    let calls = 0;
+    store.recoverExpired = async () => {
+      store.recovered++;
+      if (expired) item.status = "unknown_outcome";
+    };
+    const r = runtime(store, {
+      repairIntervalMs: 10,
+      executeProvider: async () => {
+        calls++;
+        return result;
+      },
+    });
+    await r.start();
+    expect(item.status).toBe("running");
+    expired = true;
+    await until(() => item.status === "unknown_outcome");
+    expect(calls).toBe(0);
+    await r.stop();
+    const repairs = store.recovered;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(store.recovered).toBe(repairs);
+  });
+  it("retains late evidence when settlement hooks throw", async () => {
+    const store = new Store();
+    let complete!: (r: ProviderResult) => void;
+    const errors: unknown[] = [];
+    const r = runtime(store, {
+      timeoutMs: 25,
+      onError: (error) => errors.push(error),
+      hooks: {
+        settled: async () => {
+          throw new Error("wallet unavailable");
+        },
+      },
+      executeProvider: async () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    });
+    await r.executeObservation("observation");
+    expect(errors).toHaveLength(1);
+    complete(result);
+    await until(() => store.observations.get("observation")?.status === "succeeded");
+    await until(() => errors.length === 2);
+  });
+  it("bounds startup outbox draining when marking queued makes no progress", async () => {
+    const store = new Store();
+    let pages = 0;
+    store.listUnqueued = async () => {
+      pages++;
+      return [observation()];
+    };
+    store.markQueued = async () => {};
+    const r = runtime(store, { role: "api" });
+    await r.start();
+    expect(pages).toBeLessThanOrEqual(10);
+  });
+  it("does not claim cancelled work waiting behind the concurrency bound", async () => {
+    const store = new Store(Array.from({ length: 5 }, (_v, i) => observation(`o${i}`)));
+    let calls = 0;
+    const r = runtime(store, {
+      executeProvider: async ({ signal }) => {
+        calls++;
+        return new Promise((_resolve, reject) =>
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true }),
+        );
+      },
+    });
+    const work = Promise.all([...store.observations.keys()].map((id) => r.executeObservation(id)));
+    await until(() => calls === 2);
+    expect([...store.observations.values()].filter((o) => o.status === "pending")).toHaveLength(3);
+    await r.cancel("run");
+    await work;
+    expect(calls).toBe(2);
+  });
+  it("caps caller requested concurrency at eight", async () => {
+    const store = new Store(Array.from({ length: 10 }, (_v, i) => observation(`o${i}`)));
+    let active = 0;
+    let maximum = 0;
+    const r = runtime(store, {
+      maxConcurrent: 100,
+      executeProvider: async () => {
+        active++;
+        maximum = Math.max(maximum, active);
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        active--;
+        return result;
+      },
+    });
+    await Promise.all([...store.observations.keys()].map((id) => r.executeObservation(id)));
+    expect(maximum).toBe(8);
+  });
+  it("resets the durable local pending queue before bounded startup drain", async () => {
+    const store = new Store();
+    store.queued.add("observation");
+    let resets = 0;
+    Object.assign(store, {
+      resetPendingQueue: async () => {
+        resets++;
+        store.queued.clear();
+      },
+    });
+    const r = runtime(store);
+    await r.start();
+    await until(() => store.observations.get("observation")?.status === "succeeded");
+    expect(resets).toBe(1);
+  });
   it("allows direct queue execution in external API mode without native dispatch", async () => {
     const store = new Store();
     let calls = 0;
