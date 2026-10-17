@@ -1,0 +1,36 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "opensenpai",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-17",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 30000 },
+  "containers": [
+    {
+      "class_name": "OpenSenpaiContainer",
+      "image": "../../Dockerfile",
+      "max_instances": 1,
+      "instance_type": "basic"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "APPLICATION", "class_name": "OpenSenpaiContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OpenSenpaiContainer"] }],
+  "queues": {
+    "producers": [{ "binding": "OBSERVATIONS", "queue": "opensenpai-observations" }],
+    "consumers": [
+      {
+        "queue": "opensenpai-observations",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_concurrency": 1,
+        "max_retries": 3,
+        "retry_delay": 30,
+        "dead_letter_queue": "opensenpai-observations-dlq"
+      }
+    ]
+  },
+  "triggers": { "crons": ["* * * * *"] },
+  "vars": { "WORKSPACE_ID": "local" }
+}

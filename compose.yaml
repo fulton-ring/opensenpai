@@ -1,0 +1,21 @@
+name: opensenpai
+services:
+  app:
+    build: .
+    image: opensenpai:local
+    init: true
+    restart: unless-stopped
+    command: ["--role", "all", "--transport", "http", "--port", "4111"]
+    ports:
+      - "127.0.0.1:${PORT:-4111}:4111"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-file:/app/data/opensenpai.db}
+      MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in your environment or .env}
+      WORKSPACE_ID: ${WORKSPACE_ID:-local}
+    volumes:
+      - app-data:/app/data
+volumes:
+  app-data:
