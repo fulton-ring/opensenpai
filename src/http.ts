@@ -1,0 +1,225 @@
+import { createHash, timingSafeEqual } from "node:crypto";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { MCPServer } from "@mastra/mcp";
+import type { Observation } from "./contracts.js";
+import { publicError } from "./mcp.js";
+import type { ServiceStore } from "./service.js";
+
+export interface HttpOptions {
+  mcp?: Pick<MCPServer, "startHTTP">;
+  store: Pick<ServiceStore, "getRun" | "getResults"> & {
+    listToolCalls(runId?: string): Promise<unknown[]>;
+    listUnqueued(limit?: number): Promise<Observation[]>;
+    markQueued(id: string): Promise<void>;
+    getObservation(id: string): Promise<Observation | null>;
+  };
+  runtime: { executeObservation(id: string): Promise<unknown> };
+  role: "all" | "api" | "worker";
+  mcpToken?: string;
+  internalToken?: string;
+  host?: string;
+  allowedHosts?: string[];
+  allowedOrigins?: string[];
+}
+function authorized(req: IncomingMessage, token: string | undefined) {
+  if (!token) return false;
+  const supplied = req.headers.authorization ?? "";
+  return timingSafeEqual(
+    createHash("sha256").update(supplied).digest(),
+    createHash("sha256").update(`Bearer ${token}`).digest(),
+  );
+}
+function json(res: ServerResponse, status: number, value: unknown) {
+  if (res.headersSent || res.destroyed) return;
+  res.writeHead(status, {
+    "content-type": "application/json; charset=utf-8",
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
+  res.end(JSON.stringify(value));
+}
+const terminal = new Set(["succeeded", "failed", "cancelled", "unknown_outcome"]);
+const MAX_BODY = 1_048_576;
+
+export function createHttpServer(options: HttpOptions) {
+  if (options.internalToken && options.internalToken === options.mcpToken)
+    throw new Error("INTERNAL_EXECUTION_TOKEN must differ from MCP_AUTH_TOKEN.");
+  const hosts = options.allowedHosts ?? [
+    "127.0.0.1",
+    "localhost",
+    "[::1]",
+    ...(options.host && !["0.0.0.0", "::"].includes(options.host) ? [options.host] : []),
+  ];
+  const origins = options.allowedOrigins ?? [];
+  let active = 0;
+  const server = createServer(
+    { maxHeaderSize: 16_384, requestTimeout: 150_000, headersTimeout: 15_000 },
+    (req, res) => {
+      active++;
+      res.on("close", () => active--);
+      void handle(options, hosts, origins, active, req, res).catch((error: unknown) =>
+        json(res, 500, { error: publicError(error) }),
+      );
+    },
+  );
+  server.maxRequestsPerSocket = 1_000;
+  server.keepAliveTimeout = 5_000;
+
+  return server;
+}
+
+async function handle(
+  options: HttpOptions,
+  hosts: string[],
+  origins: string[],
+  active: number,
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
+  if (active > 100)
+    return json(res, 503, { error: { code: "SERVER_BUSY", message: "Retry shortly." } });
+  const url = requestUrl(req, res, hosts, origins);
+  if (!url) return;
+  if (!limitBody(req, res)) return;
+  if (req.method === "GET" && url.pathname === "/health") {
+    return health(options, req, res);
+  }
+  const execution = url.pathname.startsWith("/internal/observations/");
+  if (!authorized(req, execution ? options.internalToken : options.mcpToken))
+    return json(res, 401, { error: { code: "UNAUTHORIZED" } });
+  if (url.pathname === "/mcp" && options.mcp && options.role !== "worker") {
+    if (
+      req.method === "POST" &&
+      !req.headers["content-type"]?.toLowerCase().startsWith("application/json")
+    )
+      return json(res, 415, { error: { code: "JSON_REQUIRED" } });
+    await options.mcp.startHTTP({
+      url,
+      httpPath: "/mcp",
+      req,
+      res,
+      options: { enableDnsRebindingProtection: true, allowedHosts: hosts },
+    });
+    return;
+  }
+  return routes(options, req, res, url);
+}
+
+function limitBody(req: IncomingMessage, res: ServerResponse) {
+  if (Number(req.headers["content-length"] ?? 0) > MAX_BODY) {
+    json(res, 413, { error: { code: "BODY_TOO_LARGE" } });
+    return false;
+  }
+  let bytes = 0;
+  req.on("data", (chunk: Buffer) => {
+    bytes += chunk.length;
+    if (bytes > MAX_BODY) {
+      json(res, 413, { error: { code: "BODY_TOO_LARGE" } });
+      req.destroy();
+    }
+  });
+
+  return true;
+}
+
+async function routes(options: HttpOptions, req: IncomingMessage, res: ServerResponse, url: URL) {
+  if (req.method === "GET" && url.pathname === "/internal/audit")
+    return json(res, 200, {
+      toolCalls: await options.store.listToolCalls(url.searchParams.get("run_id") ?? undefined),
+    });
+  if (req.method === "GET" && url.pathname === "/internal/observations/outbox")
+    return json(res, 200, {
+      observations: (await options.store.listUnqueued(100)).map(({ id }) => ({ id })),
+    });
+  const run = /^\/internal\/runs\/([^/]+)(\/results)?$/.exec(url.pathname);
+  if (req.method === "GET" && run) return runRoute(options, res, url, run);
+  const observation = /^\/internal\/observations\/([^/]+)\/(queued|execute)$/.exec(url.pathname);
+  if (req.method === "POST" && observation) return observationRoute(options, res, observation);
+  return json(res, 404, { error: { code: "NOT_FOUND" } });
+}
+
+async function runRoute(options: HttpOptions, res: ServerResponse, url: URL, run: RegExpExecArray) {
+  const id = decodeURIComponent(run[1] ?? "");
+  if (!(await options.store.getRun(id)))
+    return json(res, 404, { error: { code: "RUN_NOT_FOUND" } });
+  if (!run[2]) return json(res, 200, await options.store.getRun(id));
+  const cursor = url.searchParams.get("cursor");
+  const limit = Number(url.searchParams.get("limit") ?? "100");
+  if (
+    !Number.isInteger(limit) ||
+    limit < 1 ||
+    limit > 100 ||
+    (cursor !== null && (!Number.isInteger(Number(cursor)) || Number(cursor) < 0))
+  )
+    return json(res, 400, { error: { code: "INVALID_PAGINATION" } });
+  return json(
+    res,
+    200,
+    await options.store.getResults({
+      run_id: id,
+      limit,
+      cursor: cursor === null ? undefined : Number(cursor),
+      include_raw: url.searchParams.get("include_raw") === "true",
+    }),
+  );
+}
+
+async function observationRoute(
+  options: HttpOptions,
+  res: ServerResponse,
+  observation: RegExpExecArray,
+) {
+  const id = decodeURIComponent(observation[1] ?? "");
+  if (!(await options.store.getObservation(id)))
+    return json(res, 503, {
+      error: {
+        code: "OBSERVATION_NOT_READY",
+        message: "Observation is not durably available. Retry.",
+      },
+    });
+  if (observation[2] === "queued") {
+    await options.store.markQueued(id);
+    return json(res, 200, { queued: true });
+  }
+  try {
+    await options.runtime.executeObservation(id);
+  } catch {
+    /* Durable state below determines whether queue acknowledgement is safe. */
+  }
+  const durable = await options.store.getObservation(id);
+  if (!durable) return json(res, 503, { error: { code: "OBSERVATION_NOT_READY" } });
+  if (!terminal.has(durable.status))
+    return json(res, 409, {
+      error: {
+        code: "OBSERVATION_NOT_TERMINAL",
+        message: "Observation remains pending or leased. Retry.",
+      },
+    });
+  return json(res, 200, { id: durable.id, status: durable.status });
+}
+
+function requestUrl(req: IncomingMessage, res: ServerResponse, hosts: string[], origins: string[]) {
+  let url: URL;
+  try {
+    url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  } catch {
+    json(res, 400, { error: { code: "INVALID_URL" } });
+    return null;
+  }
+  if (!hosts.includes(url.hostname)) {
+    json(res, 403, { error: { code: "HOST_FORBIDDEN" } });
+    return null;
+  }
+  const origin = req.headers.origin;
+  if (origin && !origins.includes(origin) && origin !== url.origin) {
+    json(res, 403, { error: { code: "ORIGIN_FORBIDDEN" } });
+    return null;
+  }
+  return url;
+}
+
+function health(options: HttpOptions, req: IncomingMessage, res: ServerResponse) {
+  if (options.role === "worker" && !authorized(req, options.internalToken))
+    return json(res, 401, { error: { code: "UNAUTHORIZED" } });
+  return json(res, 200, { status: "ok", role: options.role });
+}
