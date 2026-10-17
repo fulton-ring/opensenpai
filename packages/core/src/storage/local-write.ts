@@ -1,8 +1,11 @@
-import type { Client } from "@libsql/client";
 import { ResearchError } from "../contracts.js";
+import type { ResearchClient } from "./client.js";
 
 let localWrites: Promise<unknown> = Promise.resolve();
-export function writeLock<T>(client: Client, operation: () => Promise<T>): Promise<T> {
+export function writeLock<T>(
+  client: Pick<ResearchClient, "protocol">,
+  operation: () => Promise<T>,
+): Promise<T> {
   if (client.protocol !== "file") return operation();
   let expired = false;
   let timer: ReturnType<typeof setTimeout>;

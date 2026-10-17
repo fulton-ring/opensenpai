@@ -1,4 +1,4 @@
-import type { Client, InValue, Transaction } from "@libsql/client";
+import type { InValue } from "@libsql/client";
 import {
   type Failure,
   type Observation,
@@ -13,6 +13,7 @@ import {
   type RunRecord,
   type Target,
 } from "../contracts.js";
+import type { ResearchClient, ResearchConnection, TransactionRunner } from "./client.js";
 import { writeLock } from "./local-write.js";
 import {
   canonical,
@@ -28,6 +29,7 @@ import { migrations } from "./schema.js";
 
 export interface StoreOptions {
   clock?: () => Date;
+  transactionRunner?: TransactionRunner;
 }
 export interface RunListQuery {
   project?: string;
@@ -43,12 +45,14 @@ export interface ToolCall {
 
 export class ResearchStore {
   private readonly clock: () => Date;
+  private readonly transactionRunner?: TransactionRunner;
   constructor(
-    readonly client: Client,
+    readonly client: ResearchClient,
     readonly workspaceId = "local",
     options: StoreOptions = {},
   ) {
     this.clock = options.clock ?? (() => new Date());
+    this.transactionRunner = options.transactionRunner;
   }
   async initialize(): Promise<void> {
     await writeLock(this.client, async () => {
@@ -61,8 +65,11 @@ export class ResearchStore {
   private now() {
     return this.clock().toISOString();
   }
-  private async transaction<T>(operation: (tx: Transaction) => Promise<T>): Promise<T> {
+  private async transaction<T>(operation: (tx: ResearchConnection) => Promise<T>): Promise<T> {
+    if (this.transactionRunner) return this.transactionRunner(operation);
     return writeLock(this.client, async () => {
+      if (!this.client.transaction)
+        throw new Error("Research storage requires a transaction runner");
       const tx = await this.client.transaction("write");
       try {
         const result = await operation(tx);
@@ -73,7 +80,7 @@ export class ResearchStore {
       }
     });
   }
-  private async observations(db: Pick<Transaction, "execute">, runId: string) {
+  private async observations(db: ResearchConnection, runId: string) {
     return selectData<Observation>(
       db,
       "app_observations",
@@ -82,14 +89,14 @@ export class ResearchStore {
       [runId],
     );
   }
-  private async observation(db: Pick<Transaction, "execute">, id: string) {
+  private async observation(db: ResearchConnection, id: string) {
     return (
       (
         await selectData<Observation>(db, "app_observations", this.workspaceId, "AND id=?", [id])
       )[0] ?? null
     );
   }
-  private async run(db: Pick<Transaction, "execute">, id: string): Promise<RunRecord | null> {
+  private async run(db: ResearchConnection, id: string): Promise<RunRecord | null> {
     const row = (
       await selectData<RunRecord>(db, "app_runs", this.workspaceId, "AND id=?", [id])
     )[0];
@@ -259,7 +266,12 @@ export class ResearchStore {
       await writeObservation(tx, row);
     });
   }
-  private async reserve(tx: Transaction, id: string, run: RunRecord, estimate: number | null) {
+  private async reserve(
+    tx: ResearchConnection,
+    id: string,
+    run: RunRecord,
+    estimate: number | null,
+  ) {
     if (run.cancel_requested) return false;
     const cap = run.input.max_estimated_cost_usd;
     if (
@@ -318,7 +330,7 @@ export class ResearchStore {
     });
   }
   private async settle(
-    tx: Transaction,
+    tx: ResearchConnection,
     attemptId: string,
     runId: string,
     outcome: string,
@@ -334,7 +346,7 @@ export class ResearchStore {
     await this.touchRun(tx, runId);
   }
   private async recordUsage(
-    tx: Transaction,
+    tx: ResearchConnection,
     attemptId: string,
     runId: string,
     outcome: string,
@@ -373,7 +385,7 @@ export class ResearchStore {
     });
     return corrected.rowsAffected > 0;
   }
-  private async touchRun(tx: Transaction, id: string) {
+  private async touchRun(tx: ResearchConnection, id: string) {
     const run = await this.run(tx, id);
     if (!run) return;
     run.updated_at = this.now();
@@ -495,7 +507,7 @@ export class ResearchStore {
       return rows.length + retrievals.length;
     });
   }
-  private async recoverObservation(tx: Transaction, row: Observation) {
+  private async recoverObservation(tx: ResearchConnection, row: Observation) {
     const run = await this.run(tx, row.run_id);
     const dispatched = row.dispatched_at !== null;
     const outcome: ObservationStatus = dispatched
@@ -601,7 +613,7 @@ export class ResearchStore {
       );
     });
   }
-  private async writeRetrieval(tx: Transaction, row: RetrievalRecord) {
+  private async writeRetrieval(tx: ResearchConnection, row: RetrievalRecord) {
     await tx.execute({
       sql: "UPDATE app_retrievals SET data=? WHERE workspace_id=? AND id=?",
       args: [JSON.stringify(row), this.workspaceId, row.id],
@@ -628,7 +640,7 @@ export class ResearchStore {
     });
   }
   private async retrievalFailure(
-    tx: Transaction,
+    tx: ResearchConnection,
     row: RetrievalRecord,
     error: Failure,
     unknown: boolean,
@@ -677,4 +689,7 @@ export class ResearchStore {
 }
 
 export type ResearchStorage = Omit<ResearchStore, "client">;
+export type { ResearchClient, ResearchConnection, TransactionRunner } from "./client.js";
+export type { DurableResearchStorage, DurableSqlCursor, DurableSqlValue } from "./durable-sql.js";
+export { createDurableResearchStore, DurableSqlClient } from "./durable-sql.js";
 export * from "./protocol.js";
