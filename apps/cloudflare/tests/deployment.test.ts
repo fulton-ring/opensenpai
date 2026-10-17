@@ -23,16 +23,16 @@ function message(body: unknown = { observationId: "obs-1" }) {
 }
 
 describe("Cloudflare deployment delivery", () => {
-  it("forwards string secrets at startup and requires durable remote libSQL", () => {
-    expect(() => applicationEnvironment({ DATABASE_URL: "file:/app/data/test.db" })).toThrow(
-      "remote libSQL",
-    );
-    expect(() => applicationEnvironment({ DATABASE_URL: "libsql://database.example" })).toThrow(
-      "secrets",
-    );
+  it("uses Cloudflare persistence and forwards provider secrets without database credentials", () => {
+    expect(() => applicationEnvironment({})).toThrow("secrets");
     expect(
       applicationEnvironment({
         DATABASE_URL: "libsql://database.example",
+        DATABASE_AUTH_TOKEN: "database-secret",
+        MASTRA_STORAGE_URL: "file:ephemeral.db",
+        CLOUDFLARE_API_TOKEN: "account-secret",
+        CF_API_TOKEN: "alias-secret",
+        DB: { prepare: () => {} },
         MCP_AUTH_TOKEN: "mcp-secret",
         INTERNAL_EXECUTION_TOKEN: "internal-secret",
         CUSTOM_TARGET_KEY: "provider-secret",
@@ -40,7 +40,7 @@ describe("Cloudflare deployment delivery", () => {
         OBSERVATION_DISPATCH_MODE: "all",
       }),
     ).toEqual({
-      DATABASE_URL: "libsql://database.example",
+      STORAGE_BACKEND: "cloudflare",
       MCP_AUTH_TOKEN: "mcp-secret",
       INTERNAL_EXECUTION_TOKEN: "internal-secret",
       CUSTOM_TARGET_KEY: "provider-secret",
@@ -142,6 +142,26 @@ describe("Cloudflare deployment delivery", () => {
         .status,
     ).toBe(404);
     expect((await handleRequest(new Request("https://example.com/mcp"), env)).status).toBe(401);
+    for (const path of ["/research", "/d1", "/internal/storage", "/sql"]) {
+      for (const host of ["example.com", "cloudflare-storage"]) {
+        expect(
+          (
+            await handleRequest(
+              new Request(`https://${host}${path}`, {
+                method: "POST",
+                headers: { authorization: "Bearer mcp-test-token" },
+                body: JSON.stringify({
+                  sql: "DROP TABLE app_runs",
+                  method: "initialize",
+                  args: [],
+                }),
+              }),
+              env,
+            )
+          ).status,
+        ).toBe(404);
+      }
+    }
     expect(forwarded).toBe(false);
   });
 
@@ -177,5 +197,12 @@ describe("Cloudflare deployment delivery", () => {
     });
     expect(config.triggers.crons).toEqual(["* * * * *"]);
     expect(config.containers[0].max_instances).toBe(1);
+    expect(config.d1_databases).toEqual([
+      expect.objectContaining({
+        binding: "DB",
+        database_name: "opensenpai-mastra",
+        database_id: expect.any(String),
+      }),
+    ]);
   });
 });

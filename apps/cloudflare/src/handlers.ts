@@ -108,24 +108,23 @@ export async function handleRequest(
 }
 
 export function applicationEnvironment(bindings: Record<string, unknown>): Record<string, string> {
-  const databaseUrl = bindings.DATABASE_URL;
-  if (typeof databaseUrl !== "string" || !/^(libsql|https?):\/\//.test(databaseUrl)) {
-    throw new Error(
-      "Cloudflare requires a remote libSQL DATABASE_URL; container disk is ephemeral",
-    );
-  }
   if (!bindings.MCP_AUTH_TOKEN || !bindings.INTERNAL_EXECUTION_TOKEN) {
     throw new Error("MCP_AUTH_TOKEN and INTERNAL_EXECUTION_TOKEN secrets are required");
   }
   // String bindings include arbitrary target api_key_env names without forwarding service bindings.
   const values = Object.fromEntries(
     Object.entries(bindings).filter(
-      (entry): entry is [string, string] => typeof entry[1] === "string",
+      (entry): entry is [string, string] =>
+        typeof entry[1] === "string" &&
+        !/^(DATABASE_URL|DATABASE_AUTH_TOKEN|MASTRA_STORAGE_URL|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|CLOUDFLARE_API_KEY|CF_API_KEY)$/.test(
+          entry[0],
+        ),
     ),
   );
   return {
     ...values,
     NODE_ENV: "production",
+    STORAGE_BACKEND: "cloudflare",
     HOST: "0.0.0.0",
     MCP_ALLOWED_HOSTS: [
       ...new Set([
