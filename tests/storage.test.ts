@@ -225,7 +225,7 @@ it("never repeats failed or ambiguous retrieval, and enforces reserved budgets",
   now += 11;
   await a.recoverExpired();
   expect((await a.getRetrieval("unknown"))?.status).toBe("unknown_outcome");
-  expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0.2);
+  expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0.4);
 });
 
 it("accepts late paid results for the same uncertain attempt once", async () => {
@@ -401,6 +401,99 @@ it("reconciles one late retrieval result without repeating or mutating original 
     reserved_cost_usd: 0,
   });
   expect((await a.client.execute("SELECT data FROM app_usage")).rows).toHaveLength(1);
+  expect((await a.client.execute("SELECT data FROM app_usage_reconciliations")).rows).toHaveLength(
+    1,
+  );
+});
+
+it("persists partial failed response evidence and actual charges without changing failure status", async () => {
+  const a = await store();
+  const item = await observation(a);
+  const claim = await a.claim(item.id, "a");
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  await a.markDispatched(item.id, claim.attempt_id);
+  const failure = {
+    code: "PROVIDER_RESPONSE_FAILED",
+    message: "Provider returned a failed response",
+    retryable: false,
+  };
+  await a.fail(item.id, claim.attempt_id, failure, "failed", result);
+  await a.fail(item.id, claim.attempt_id, failure, "failed", {
+    ...result,
+    usage: { ...result.usage, reported_cost_usd: 99 },
+  });
+  expect(await a.getObservation(item.id)).toMatchObject({
+    status: "failed",
+    result,
+    error: failure,
+  });
+  expect(await a.getRun(item.run_id)).toMatchObject({
+    status: "failed",
+    reported_cost_usd: 0.02,
+    reserved_cost_usd: 0,
+  });
+  expect((await a.getResults({ run_id: item.run_id })).observations[0]?.result).not.toHaveProperty(
+    "raw_response",
+  );
+  expect(
+    (await a.getResults({ run_id: item.run_id, include_raw: true })).observations[0]?.result
+      ?.raw_response,
+  ).toEqual(result.raw_response);
+  expect((await a.client.execute("SELECT data FROM app_usage")).rows).toHaveLength(1);
+});
+
+it("retains an unknown charge reservation on a partial failed response without actual cost", async () => {
+  const a = await store();
+  const item = await observation(a);
+  const claim = await a.claim(item.id, "a");
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  await a.markDispatched(item.id, claim.attempt_id);
+  const partial = { ...result, usage: { ...result.usage, reported_cost_usd: null } };
+  await a.fail(
+    item.id,
+    claim.attempt_id,
+    { code: "FAILED", message: "failed", retryable: false },
+    "failed",
+    partial,
+  );
+  expect((await a.getObservation(item.id))?.result?.usage.reported_cost_usd).toBeNull();
+  expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0.1);
+});
+
+it("retains failed retrieval estimates when actual charges remain unknown", async () => {
+  const a = await store();
+  const item = await observation(a);
+  expect(await a.claimRetrieval("first-retrieval", item.run_id, "a", 100, 0.7)).toBe(true);
+  await a.failRetrieval(
+    "first-retrieval",
+    "a",
+    { code: "HTTP_FAILURE", message: "Retrieval failed", retryable: false },
+    false,
+  );
+  expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0.7);
+  expect(await a.claimRetrieval("next-retrieval", item.run_id, "a", 100, 0.6)).toBe(false);
+});
+
+it("reconciles a late failed response for its uncertain attempt once", async () => {
+  const a = await store();
+  const item = await observation(a);
+  const claim = await a.claim(item.id, "a", 1);
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  await a.markDispatched(item.id, claim.attempt_id);
+  now += 2;
+  await a.recoverExpired();
+  await a.fail(
+    item.id,
+    claim.attempt_id,
+    { code: "FAILED", message: "Provider failed", retryable: false },
+    "failed",
+    result,
+  );
+  expect((await a.getObservation(item.id))?.status).toBe("failed");
+  expect(await a.getRun(item.run_id)).toMatchObject({
+    reported_cost_usd: 0.02,
+    reserved_cost_usd: 0,
+  });
   expect((await a.client.execute("SELECT data FROM app_usage_reconciliations")).rows).toHaveLength(
     1,
   );

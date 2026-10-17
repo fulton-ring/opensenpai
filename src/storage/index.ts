@@ -312,7 +312,11 @@ export class ResearchStore {
       sql: "SELECT json_extract(data,'$.outcome') outcome FROM app_usage WHERE workspace_id=? AND attempt_id=?",
       args: [this.workspaceId, attemptId],
     });
-    if (previous.rows[0]?.outcome !== "unknown_outcome" || outcome !== "succeeded") return false;
+    if (
+      previous.rows[0]?.outcome !== "unknown_outcome" ||
+      !["succeeded", "failed", "cancelled"].includes(outcome)
+    )
+      return false;
     const corrected = await tx.execute({
       sql: "INSERT INTO app_usage_reconciliations(workspace_id,attempt_id,run_id,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,attempt_id) DO NOTHING",
       args,
@@ -361,20 +365,32 @@ export class ResearchStore {
     attemptId: string,
     error: Failure,
     outcome: "failed" | "unknown_outcome" | "cancelled",
+    partialResult?: ProviderResult,
   ): Promise<void> {
     await this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
-      if (row?.status !== "running" || row.attempt_id !== attemptId) return;
-      Object.assign(row, { status: outcome, error, lease_until: null, updated_at: this.now() });
+      const lateEvidence = row?.status === "unknown_outcome" && partialResult !== undefined;
+      if (!row || (row.status !== "running" && !lateEvidence) || row.attempt_id !== attemptId)
+        return;
+      const actual = partialResult?.usage.reported_cost_usd ?? null;
+      const unbilled =
+        partialResult === undefined && row.dispatched_at === null && outcome !== "unknown_outcome";
+      Object.assign(row, {
+        status: outcome,
+        error,
+        result: partialResult ?? row.result,
+        lease_until: null,
+        updated_at: this.now(),
+      });
       await writeObservation(tx, row);
       await this.settle(
         tx,
         attemptId,
         row.run_id,
         outcome,
-        null,
-        outcome !== "unknown_outcome" && row.dispatched_at === null,
-        null,
+        actual,
+        actual !== null || unbilled,
+        partialResult?.usage ?? null,
       );
     });
   }
@@ -561,7 +577,7 @@ export class ResearchStore {
       String(data.rows[0]?.run_id),
       row.status,
       null,
-      !unknown,
+      false,
       null,
     );
   }
