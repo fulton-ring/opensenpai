@@ -14,6 +14,7 @@ const defaults = [
     id: "openai-native",
     transport: "openai",
     model: "gpt-6-luna",
+    reasoning_effort: "none",
     search: { mode: "native" },
     pricing: { input_per_million: 0.1, output_per_million: 0.5, search_per_request: 0.01 },
   },
@@ -43,6 +44,7 @@ const defaults = [
     id: "router-plain",
     transport: "openrouter",
     model: "openai/gpt-6-luna",
+    reasoning_effort: "none",
     search: { mode: "off" },
     pricing: { input_per_million: 0.1, output_per_million: 0.5 },
   },
@@ -50,6 +52,7 @@ const defaults = [
     id: "openai-exa",
     transport: "openai",
     model: "gpt-6-luna",
+    reasoning_effort: "none",
     search: { mode: "controlled", engine: "exa" },
     pricing: { input_per_million: 0.1, output_per_million: 0.5 },
   },
@@ -57,6 +60,7 @@ const defaults = [
     id: "router-exa",
     transport: "openrouter",
     model: "openai/gpt-6-luna",
+    reasoning_effort: "none",
     search: { mode: "controlled", engine: "exa" },
     pricing: { input_per_million: 0.1, output_per_million: 0.5 },
   },
@@ -101,27 +105,46 @@ export function vertexCredentials(env: Record<string, string | undefined>): {
     );
   }
 }
-export function targetAvailability(
-  target: Target,
-  env: Record<string, string | undefined>,
-): { available: boolean; reason?: string } {
-  if (target.transport === "openrouter" && target.model.includes(":online")) {
-    return {
-      available: false,
-      reason:
-        "OpenRouter :online implicitly enables deprecated search; configure explicit native or controlled search",
-    };
+function nativeReasoningReason(target: Target): string | undefined {
+  if (target.transport !== "openai") return undefined;
+  const reasoningModel =
+    /^(?:o\d(?:-|$)|gpt-(?:[5-9]|\d{2,})(?:[.-]|$))/.test(target.model) &&
+    !/^gpt-\d+-chat(?:-|$)/.test(target.model);
+  if (!reasoningModel)
+    return "The native SDK does not support reasoning effort for this OpenAI model";
+  const gpt6OrLater = /^gpt-(?:[6-9]|\d{2,})(?:[.-]|$)/.test(target.model);
+  const nonReasoningSupported = ["gpt-6-luna", "gpt-6-sol"].includes(target.model);
+  if (
+    gpt6OrLater &&
+    (target.reasoning_effort === "minimal" ||
+      (target.reasoning_effort === "none" && !nonReasoningSupported))
+  )
+    return "The native SDK does not support this reasoning effort for the configured GPT model";
+  return undefined;
+}
+function configurationReason(target: Target): string | undefined {
+  if (target.reasoning_effort !== undefined) {
+    if (!["openai", "openrouter"].includes(target.transport))
+      return "Reasoning effort is supported only for OpenAI and OpenRouter targets";
+    const reason = nativeReasoningReason(target);
+    if (reason) return reason;
   }
+  if (target.transport === "openrouter" && target.model.includes(":online"))
+    return "OpenRouter :online implicitly enables deprecated search; configure explicit native or controlled search";
   if (
     target.transport === "perplexity" &&
     target.model.startsWith("perplexity/") &&
     target.search.mode !== "native"
   )
-    return {
-      available: false,
-      reason:
-        "Perplexity grounded models require native search; choose a non-search model for controlled/off modes",
-    };
+    return "Perplexity grounded models require native search; choose a non-search model for controlled/off modes";
+  return undefined;
+}
+export function targetAvailability(
+  target: Target,
+  env: Record<string, string | undefined>,
+): { available: boolean; reason?: string } {
+  const reason = configurationReason(target);
+  if (reason) return { available: false, reason };
   const key = {
     openai: "OPENAI_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",

@@ -93,6 +93,9 @@ function nativeRouter(input: ProviderInput, env: Env, fetch: typeof globalThis.f
     fetch,
     extraBody: {
       provider: { allow_fallbacks: false },
+      ...(input.target.reasoning_effort
+        ? { reasoning: { effort: input.target.reasoning_effort } }
+        : {}),
       ...(search.mode === "native"
         ? {
             tools: [
@@ -222,6 +225,10 @@ export async function executeProvider(
       maxOutputTokens: target.max_output_tokens,
       temperature: target.temperature,
       maxRetries: 0,
+      providerOptions:
+        target.transport === "openai" && target.reasoning_effort
+          ? { openai: { reasoningEffort: target.reasoning_effort } }
+          : undefined,
       abortSignal: signal,
     });
     await Promise.all(pending);

@@ -57,3 +57,20 @@ it("rejects implicit OpenRouter online search in controlled targets", () => {
     false,
   );
 });
+it("disables reasoning in default GPT targets and preserves explicitly configured effort", () => {
+  const targets = loadTargets({});
+  expect(
+    targets.filter((t) => t.model.includes("gpt-6-luna")).map((t) => t.reasoning_effort),
+  ).toEqual(["none", "none", "none", "none"]);
+  const targetsJson = JSON.stringify([
+    {
+      id: "custom",
+      transport: "openai",
+      model: "gpt-6-luna",
+      search: { mode: "off" },
+      reasoning_effort: "low",
+    },
+  ]);
+  expect(loadTargets({ TARGETS_JSON: targetsJson })[0]?.reasoning_effort).toBe("low");
+  expect(() => loadTargets({ TARGETS_JSON: targetsJson.replace("low", "unbounded") })).toThrow();
+});

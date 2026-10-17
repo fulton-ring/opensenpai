@@ -32,6 +32,9 @@ export const targetSchema = z
     max_output_tokens: z.number().int().min(32).max(4096).default(512),
     timeout_ms: z.number().int().min(1_000).max(120_000).default(120_000),
     temperature: z.number().min(0).max(2).optional(),
+    reasoning_effort: z
+      .enum(["none", "minimal", "low", "medium", "high", "xhigh", "max"])
+      .optional(),
     location: z.string().max(80).optional(),
     pricing: pricingSchema.optional(),
   })

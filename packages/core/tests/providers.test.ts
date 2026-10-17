@@ -590,3 +590,91 @@ it("leaves cost unknown when native search has a positive price and no usage cou
   expect(result.usage.search_requests).toBeNull();
   expect(result.usage.estimated_cost_usd).toBeNull();
 });
+it.each(["none", "minimal"])(
+  "sends explicit OpenAI reasoning effort %s through native SDK",
+  async (effort) => {
+    const request = input();
+    request.target = targetSchema.parse({
+      ...request.target,
+      model: effort === "minimal" ? "gpt-5" : "gpt-6-luna",
+      reasoning_effort: effort,
+    });
+    let body: Record<string, unknown> = {};
+    await executeProvider(
+      request,
+      { OPENAI_API_KEY: "x" },
+      {
+        fetch: async (_u, i) => {
+          body = JSON.parse(String(i?.body));
+          return response(openai);
+        },
+      },
+    );
+    expect(body.reasoning).toMatchObject({ effort });
+    expect(body.max_output_tokens).toBe(512);
+  },
+);
+it("sends explicit OpenRouter reasoning effort without changing configured model or output cap", async () => {
+  const request = input("openrouter", { mode: "off" });
+  request.target = targetSchema.parse({ ...request.target, reasoning_effort: "none" });
+  let body: Record<string, unknown> = {};
+  const raw = {
+    id: "r",
+    model: "test-model",
+    object: "chat.completion",
+    created: 1,
+    choices: [
+      { index: 0, message: { role: "assistant", content: "Answer" }, finish_reason: "stop" },
+    ],
+    usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+  };
+  await executeProvider(
+    request,
+    { OPENROUTER_API_KEY: "x" },
+    {
+      fetch: async (_u, i) => {
+        body = JSON.parse(String(i?.body));
+        return response(raw);
+      },
+    },
+  );
+  expect(body.reasoning).toEqual({ effort: "none" });
+  expect(body.model).toBe("test-model");
+  expect(body.max_tokens).toBe(512);
+});
+it("rejects reasoning effort on unsupported native transports before HTTP", async () => {
+  const request = input("anthropic");
+  request.target = targetSchema.parse({ ...request.target, reasoning_effort: "none" });
+  let calls = 0;
+  await expect(
+    executeProvider(
+      request,
+      { ANTHROPIC_API_KEY: "x" },
+      {
+        fetch: async () => {
+          calls++;
+          return response({});
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "unsupported_configuration" });
+  expect(calls).toBe(0);
+});
+it("rejects GPT6 minimal reasoning that the native SDK otherwise silently drops", async () => {
+  const request = input();
+  request.target = targetSchema.parse({ ...request.target, reasoning_effort: "minimal" });
+  let calls = 0;
+  await expect(
+    executeProvider(
+      request,
+      { OPENAI_API_KEY: "x" },
+      {
+        fetch: async () => {
+          calls++;
+          return response(openai);
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "unsupported_configuration" });
+  expect(calls).toBe(0);
+});
