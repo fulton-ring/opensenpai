@@ -119,12 +119,11 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
 }
 
 export function agentEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
-  const allowed = ["PATH", "LANG", "LC_ALL", "ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"];
+  const allowed = ["PATH", "LANG", "LC_ALL", "ANTHROPIC_API_KEY"];
   return {
     ...Object.fromEntries(allowed.filter((key) => env[key]).map((key) => [key, env[key]])),
-    HOME: cwd,
     TMPDIR: cwd,
-    XDG_CONFIG_HOME: cwd,
+    // https://code.claude.com/docs/en/env-vars#variables
     CLAUDE_CONFIG_DIR: join(cwd, ".claude"),
   };
 }
@@ -342,6 +341,8 @@ async function execute(
   await writeFile(config, JSON.stringify(makeMcpConfig(options, env, database)), { mode: 0o600 });
   const args = [
     "--bare",
+    "--setting-sources",
+    "",
     "--strict-mcp-config",
     "--mcp-config",
     config,
@@ -379,9 +380,9 @@ async function execute(
 
 export async function main(args = process.argv.slice(2), env = process.env): Promise<void> {
   const options = harnessOptions(args, env);
-  if (!env.ANTHROPIC_API_KEY && !env.CLAUDE_CODE_OAUTH_TOKEN)
+  if (!env.ANTHROPIC_API_KEY)
     throw new Error(
-      "Provide explicit agent authentication via ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN",
+      "Provide explicit ANTHROPIC_API_KEY authentication; bare Claude does not read OAuth credentials",
     );
   await mkdir(options.outputDir, { recursive: true, mode: 0o700 });
   const ledgerPath = join(options.outputDir, "cumulative-spend.json");

@@ -169,6 +169,10 @@ it("refuses accidental paid runs and isolates agent auth from service credential
     ANTHROPIC_API_KEY: "agent-key",
     OPENROUTER_API_KEY: "provider-key",
     MCP_AUTH_TOKEN: "server-token",
+    HOME: "/real/home",
+    XDG_CONFIG_HOME: "/real/config",
+    CLAUDE_CONFIG_DIR: "/real/claude",
+    CLAUDE_CODE_OAUTH_TOKEN: "ignored-oauth",
   };
   const options = harnessOptions([], env);
   expect(options.targets).toEqual(["router-exa"]);
@@ -176,7 +180,13 @@ it("refuses accidental paid runs and isolates agent auth from service credential
   expect(isolated.ANTHROPIC_API_KEY).toBe("agent-key");
   expect(isolated.OPENROUTER_API_KEY).toBeUndefined();
   expect(isolated.MCP_AUTH_TOKEN).toBeUndefined();
-  expect(isolated.HOME).toBe("/tmp/isolated");
+  expect(isolated.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  expect(isolated.HOME).toBeUndefined();
+  expect(isolated.XDG_CONFIG_HOME).toBeUndefined();
+  expect(isolated.CLAUDE_CONFIG_DIR).toBe("/tmp/isolated/.claude");
+  expect(env.HOME).toBe("/real/home");
+  expect(env.XDG_CONFIG_HOME).toBe("/real/config");
+  expect(env.CLAUDE_CONFIG_DIR).toBe("/real/claude");
   const http = makeMcpConfig(options, env, "/tmp/db");
   expect(JSON.stringify(http)).toContain("server-token");
   expect(JSON.stringify(http)).not.toContain("provider-key");
@@ -270,7 +280,7 @@ it("runs deterministic CLI fixtures through HTTP verification and persists faile
     ];
     await writeFile(
       cli,
-      `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript(events))});\n`,
+      `#!${process.execPath}\nconst source=process.argv.indexOf("--setting-sources");if(source<0||process.argv[source+1]!==""||process.env.HOME||process.env.XDG_CONFIG_HOME)process.exit(8);process.stdout.write(${JSON.stringify(transcript(events))});\n`,
     );
     await chmod(cli, 0o700);
     const env = {
@@ -348,4 +358,15 @@ it("terminates grandchildren when an external CLI times out", async () => {
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+it("requires API-key authentication because bare Claude ignores OAuth", async () => {
+  const { main } = await import("../scripts/e2e-real-agent.js");
+  await expect(
+    main([], {
+      OPENSENPAI_LIVE_TESTS: "1",
+      E2E_TARGETS: "router-exa",
+      CLAUDE_CODE_OAUTH_TOKEN: "not-supported-in-bare-mode",
+    }),
+  ).rejects.toThrow(/ANTHROPIC_API_KEY/);
 });
