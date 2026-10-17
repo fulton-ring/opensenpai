@@ -25,6 +25,7 @@ function setup(env: Record<string, string | undefined> = { OPENAI_API_KEY: "test
   let queued = false;
   const dispatched: Observation[][] = [];
   const audits: string[] = [];
+  const toolCalls: { tool: string; run_id?: string }[] = [];
   const store: ServiceStore = {
     async createRun(value, _targets, estimate) {
       creates++;
@@ -69,8 +70,9 @@ function setup(env: Record<string, string | undefined> = { OPENAI_API_KEY: "test
     async cancelRun() {
       return saved ?? null;
     },
-    async recordToolCall(tool) {
+    async recordToolCall(tool, runId) {
       audits.push(tool);
+      toolCalls.push({ tool, run_id: runId });
     },
   };
   const service = new ResearchService({
@@ -85,7 +87,7 @@ function setup(env: Record<string, string | undefined> = { OPENAI_API_KEY: "test
     targets: [target],
     env,
   });
-  return { service, creates: () => creates, dispatched, audits };
+  return { service, creates: () => creates, dispatched, audits, toolCalls };
 }
 describe("run service boundaries", () => {
   it("validates every selected target before creating a run", async () => {
@@ -160,5 +162,21 @@ describe("run service boundaries", () => {
       citation_count: 1,
       observed_at: "observed-now",
     });
+  });
+  it("scopes accepted start_run audits to the durable run including idempotent retries", async () => {
+    const test = setup();
+    await test.service.startRun(input);
+    await test.service.startRun(input);
+    expect(test.toolCalls).toEqual([
+      { tool: "start_run", run_id: "run-1" },
+      { tool: "start_run", run_id: "run-1" },
+    ]);
+  });
+  it("records failed preflight starts without inventing a run ID", async () => {
+    const test = setup({});
+    await expect(test.service.startRun(input)).rejects.toMatchObject({
+      code: "TARGET_UNAVAILABLE",
+    });
+    expect(test.toolCalls).toEqual([{ tool: "start_run", run_id: undefined }]);
   });
 });

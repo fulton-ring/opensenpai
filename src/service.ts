@@ -74,7 +74,19 @@ export class ResearchService {
   }
 
   async startRun(value: unknown) {
-    await this.options.store.recordToolCall("start_run");
+    const saved = await this.createValidatedRun(value).catch(async (error: unknown) => {
+      await this.options.store.recordToolCall("start_run");
+      throw error;
+    });
+    await this.options.store.recordToolCall("start_run", saved.run.id);
+    if (!terminal(saved.run) && this.options.dispatchMode !== "external") {
+      const pending = await this.options.store.listUnqueued(100, saved.run.id);
+      if (pending.length) await this.options.runtime.dispatch(pending);
+    }
+    return saved;
+  }
+
+  private async createValidatedRun(value: unknown) {
     const input = runInputSchema.parse(value);
     const targets = this.selected(input);
     for (const target of targets) {
@@ -98,12 +110,7 @@ export class ResearchService {
           "Estimated run cost exceeds max_estimated_cost_usd. Reduce observations or increase the budget.",
         );
     }
-    const saved = await this.options.store.createRun(input, targets, estimate);
-    if (!terminal(saved.run) && this.options.dispatchMode !== "external") {
-      const pending = await this.options.store.listUnqueued(100, saved.run.id);
-      if (pending.length) await this.options.runtime.dispatch(pending);
-    }
-    return saved;
+    return this.options.store.createRun(input, targets, estimate);
   }
 
   async getRun({
