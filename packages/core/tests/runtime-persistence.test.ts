@@ -7,7 +7,7 @@ import {
   runInputSchema,
   targetSchema,
 } from "../src/contracts.js";
-import { createRuntime } from "../src/runtime/index.js";
+import { createRuntime, type RuntimeOptions } from "../src/runtime/index.js";
 import { ResearchStore } from "../src/storage/index.js";
 
 const result: ProviderResult = {
@@ -40,8 +40,12 @@ afterEach(async () => {
   await Promise.all(runtimes.splice(0).map((r) => r.stop()));
   await Promise.all(stores.splice(0).map((s) => s.close()));
 });
-async function fixture(controlled = false) {
-  const store = new ResearchStore(createClient({ url: "file::memory:" }), "test");
+async function fixture(
+  controlled = false,
+  options: Partial<RuntimeOptions> = {},
+  clock?: () => Date,
+) {
+  const store = new ResearchStore(createClient({ url: "file::memory:" }), "test", { clock });
   stores.push(store);
   await store.initialize();
   const target = targetSchema.parse({
@@ -91,6 +95,7 @@ async function fixture(controlled = false) {
         created_at: new Date().toISOString(),
       };
     },
+    ...options,
   });
   runtimes.push(runtime);
   return {
@@ -141,12 +146,13 @@ it("retains paid retrieval evidence when completion writes keep failing", async 
 });
 
 it("recovers expired external API claims at startup without paid replay", async () => {
-  const f = await fixture();
-  await f.store.claim(f.item.id, "crashed", 1);
+  let now = Date.now();
+  const f = await fixture(false, {}, () => new Date(now));
+  await f.store.claim(f.item.id, "crashed", 1000);
   const claimed = await f.store.getObservation(f.item.id);
   if (!claimed?.attempt_id) throw new Error("missing attempt");
   await f.store.markDispatched(f.item.id, claimed.attempt_id);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  now += 1001;
   const runtime = createRuntime({
     store: f.store,
     env: {},
@@ -163,8 +169,9 @@ it("recovers expired external API claims at startup without paid replay", async 
   expect((await f.store.getObservation(f.item.id))?.status).toBe("unknown_outcome");
 });
 it("recovers claims that expire after external API startup before direct execution", async () => {
-  const f = await fixture();
-  await f.store.claim(f.item.id, "crashed", 50);
+  let now = Date.now();
+  const f = await fixture(false, {}, () => new Date(now));
+  await f.store.claim(f.item.id, "crashed", 1000);
   const claimed = await f.store.getObservation(f.item.id);
   if (!claimed?.attempt_id) throw new Error("missing attempt");
   await f.store.markDispatched(f.item.id, claimed.attempt_id);
@@ -182,7 +189,79 @@ it("recovers claims that expire after external API startup before direct executi
   runtimes.push(runtime);
   await runtime.start();
   expect((await f.store.getObservation(f.item.id))?.status).toBe("running");
-  await new Promise((resolve) => setTimeout(resolve, 60));
+  now += 1001;
   await runtime.executeObservation(f.item.id);
   expect((await f.store.getObservation(f.item.id))?.status).toBe("unknown_outcome");
 });
+
+async function eventually(check: () => Promise<boolean>) {
+  for (let i = 0; i < 100; i++) {
+    try {
+      if (await check()) return;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("evidence was not persisted");
+}
+it.each([false, true])(
+  "retains late provider evidence when completion writes fail persistently=%s",
+  async (persistent) => {
+    let complete!: (value: ProviderResult) => void;
+    let calls = 0;
+    const f = await fixture(false, {
+      timeoutMs: 20,
+      executeProvider: async () => {
+        calls++;
+        return new Promise((resolve) => {
+          complete = resolve;
+        });
+      },
+    });
+    const writes = vi.spyOn(f.store, "succeed");
+    if (persistent) writes.mockRejectedValue(new Error("write unavailable"));
+    else writes.mockRejectedValueOnce(new Error("write unavailable"));
+    await f.runtime.executeObservation(f.item.id);
+    complete(result);
+    await eventually(async () => Boolean((await f.store.getObservation(f.item.id))?.result));
+    expect(calls).toBe(1);
+    expect((await f.store.getObservation(f.item.id))?.result).toEqual(result);
+    expect((await f.store.getRun(f.run.id))?.reported_cost_usd).toBe(0.01);
+  },
+);
+it.each([false, true])(
+  "retains late retrieval evidence when completion writes fail persistently=%s",
+  async (persistent) => {
+    let complete!: (value: RetrievalBundle) => void;
+    let id = "";
+    let calls = 0;
+    const f = await fixture(true, {
+      timeoutMs: 20,
+      retrieveExa: async (input) => {
+        id = input.id;
+        calls++;
+        return new Promise((resolve) => {
+          complete = resolve;
+        });
+      },
+    });
+    const writes = vi.spyOn(f.store, "finishRetrieval");
+    if (persistent) writes.mockRejectedValue(new Error("write unavailable"));
+    else writes.mockRejectedValueOnce(new Error("write unavailable"));
+    await f.runtime.executeObservation(f.item.id);
+    const bundle: RetrievalBundle = {
+      id,
+      queries: ["Question?"],
+      context: "late paid retrieval",
+      sources: [],
+      raw_response: { paid: true },
+      reported_cost_usd: 0.015,
+      estimated_cost_usd: 0.02,
+      created_at: new Date().toISOString(),
+    };
+    complete(bundle);
+    await eventually(async () => Boolean((await f.store.getRetrieval(id))?.bundle));
+    expect(calls).toBe(1);
+    expect((await f.store.getRetrieval(id))?.bundle).toEqual(bundle);
+    expect((await f.store.getRun(f.run.id))?.reported_cost_usd).toBe(0.015);
+  },
+);

@@ -219,6 +219,8 @@ export interface ProviderInput {
 }
 
 export interface SpendAuthorization {
+  /** Omitted operations are model calls; retrieval uses its shared bundle ID as attempt_id. */
+  operation?: "model" | "retrieval";
   workspace_id: string;
   run_id: string;
   observation_id: string;

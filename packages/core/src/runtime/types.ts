@@ -47,6 +47,7 @@ export interface RuntimeStore {
     error: Failure,
     unknown: boolean,
     partialBundle?: RetrievalBundle,
+    notDispatched?: boolean,
   ): Promise<void>;
 }
 export interface RuntimeOptions {

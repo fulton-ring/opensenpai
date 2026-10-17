@@ -9,6 +9,13 @@ import {
 } from "../contracts.js";
 import { EXA_ESTIMATED_COST_PER_QUERY } from "../targets.js";
 import { Concurrency, concurrencyLimit } from "./concurrency.js";
+import {
+  authorizeSpend,
+  reportError,
+  retrievalAuthorization,
+  retrievalUsage,
+  settleSpend,
+} from "./spend.js";
 import type { RuntimeOptions } from "./types.js";
 
 const safeBeforeDispatch = new Set([
@@ -123,6 +130,7 @@ export class ObservationExecutor {
         observation_id: id,
         attempt_id: observation.attempt_id,
         estimated_cost_usd: observation.estimated_cost_usd,
+        operation: "model",
       },
       controller: new AbortController(),
       dispatched: false,
@@ -144,15 +152,12 @@ export class ObservationExecutor {
     return { id };
   }
   private async settle(attempt: Attempt) {
-    try {
-      await this.options.hooks?.settled?.(
-        attempt.authorization,
-        attempt.terminal,
-        attempt.result?.usage ?? null,
-      );
-    } catch (error) {
-      this.options.onError?.(error);
-    }
+    await settleSpend(
+      this.options,
+      attempt.authorization,
+      attempt.terminal,
+      attempt.result?.usage ?? null,
+    );
   }
   private monitor(attempt: Attempt, workflowSignal: AbortSignal) {
     const { controller, observation } = attempt;
@@ -197,10 +202,7 @@ export class ObservationExecutor {
     await this.check(attempt);
     const retrieval = await this.retrieve(observation, controller.signal);
     await this.check(attempt);
-    await bounded(
-      this.options.hooks?.authorize?.(authorization) ?? Promise.resolve(),
-      controller.signal,
-    );
+    await bounded(authorizeSpend(this.options, authorization), controller.signal);
     await this.check(attempt);
     if (!(await this.options.store.markDispatched(observation.id, authorization.attempt_id)))
       throw new ResearchError("cancelled", "Dispatch was cancelled or ownership was lost");
@@ -220,13 +222,12 @@ export class ObservationExecutor {
       this.options.env,
     );
     attempt.providerCall = providerCall;
-    attempt.result = await bounded(providerCall, controller.signal);
+    await this.persistResult(attempt, await bounded(providerCall, controller.signal));
+  }
+  private async persistResult(attempt: Attempt, result: ProviderResult): Promise<void> {
+    attempt.result = result;
     await persistEvidence(() =>
-      this.options.store.succeed(
-        observation.id,
-        authorization.attempt_id,
-        attempt.result as ProviderResult,
-      ),
+      this.options.store.succeed(attempt.observation.id, attempt.authorization.attempt_id, result),
     );
     attempt.terminal = "succeeded";
   }
@@ -250,13 +251,11 @@ export class ObservationExecutor {
     void attempt.providerCall
       .then(
         async (late) => {
-          await this.options.store.succeed(
-            attempt.observation.id,
-            attempt.authorization.attempt_id,
-            late,
-          );
-          attempt.terminal = "succeeded";
-          attempt.result = late;
+          try {
+            await this.persistResult(attempt, late);
+          } catch (error) {
+            await this.persistFailure(attempt, error);
+          }
           await this.settle(attempt);
         },
         async (error) => {
@@ -265,7 +264,7 @@ export class ObservationExecutor {
           await this.settle(attempt);
         },
       )
-      .catch((error) => this.options.onError?.(error));
+      .catch((error) => reportError(this.options, error));
   }
   private async retrieve(
     observation: Observation,
@@ -293,16 +292,19 @@ export class ObservationExecutor {
     id: string,
     signal: AbortSignal,
   ): Promise<RetrievalBundle> {
-    const { store } = this.options;
     const search = observation.target.search;
     if (search.mode !== "controlled")
       throw new ResearchError("invalid_retrieval", "Controlled search is required");
+    const authorization = retrievalAuthorization(observation, id);
     let call: Promise<RetrievalBundle> | undefined;
-    let bundle: RetrievalBundle | undefined;
+    let bundle: RetrievalBundle;
+    let dispatched = false;
     try {
+      await bounded(authorizeSpend(this.options, authorization), signal);
       const retrieve =
         this.options.retrieveExa ?? (await import("../providers/index.js")).retrieveExa;
       signal.throwIfAborted();
+      dispatched = true;
       call = retrieve(
         {
           id,
@@ -314,17 +316,46 @@ export class ObservationExecutor {
         this.options.env,
       );
       bundle = await bounded(call, signal);
-      const completed = bundle;
-      await persistEvidence(() => store.finishRetrieval(completed, this.owner, observation.run_id));
-      return bundle;
     } catch (error) {
-      await store.failRetrieval(id, this.owner, failure(error), !knownRejection(error), bundle);
+      const unknown = dispatched && !knownRejection(error);
+      await this.options.store.failRetrieval(
+        id,
+        this.owner,
+        failure(error),
+        unknown,
+        undefined,
+        !dispatched,
+      );
+      await settleSpend(
+        this.options,
+        authorization,
+        unknown ? "unknown_outcome" : "failed",
+        dispatched ? null : retrievalUsage(),
+      );
       if (call && signal.aborted)
         void call
-          .then((bundle) => store.finishRetrieval(bundle, this.owner, observation.run_id))
-          .catch((error) => this.options.onError?.(error));
+          .then((late) => this.persistBundle(observation, authorization, late))
+          .catch((error) => reportError(this.options, error));
       throw error;
     }
+    await this.persistBundle(observation, authorization, bundle);
+    return bundle;
+  }
+  private async persistBundle(
+    observation: Observation,
+    authorization: SpendAuthorization,
+    bundle: RetrievalBundle,
+  ): Promise<void> {
+    try {
+      await persistEvidence(() =>
+        this.options.store.finishRetrieval(bundle, this.owner, observation.run_id),
+      );
+    } catch (error) {
+      await this.options.store.failRetrieval(bundle.id, this.owner, failure(error), true, bundle);
+      await settleSpend(this.options, authorization, "unknown_outcome", retrievalUsage(bundle));
+      throw error;
+    }
+    await settleSpend(this.options, authorization, "succeeded", retrievalUsage(bundle));
   }
   private async waitForRetrieval(id: string, signal: AbortSignal): Promise<RetrievalBundle> {
     while (true) {
