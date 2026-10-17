@@ -1,0 +1,9 @@
+# Research storage
+
+`ResearchStore` accepts an existing `@libsql/client` client and a trusted workspace ID. Authentication must resolve that ID before calling the store; never take it from tool arguments. Application tables use the `app_` prefix and do not migrate Mastra tables. Initialization is explicit and idempotent.
+
+Use a local `file:` database from **one application process**. Native writes are serialized in that process across store/client instances, and queued writes expire after five seconds before starting. The installed native libSQL driver can retain a busy prepared statement after competing file writers, causing later commits to fail. Sharing a writable file across application processes is unsupported. Split deployments must use remote libSQL, where the server serializes write transactions. No process-local lock gates remote clients, and transaction failures are surfaced rather than replaying an uncertain commit.
+
+Attempt IDs never change within a claim. Terminal usage records are append-only and unique per workspace/attempt. A late successful response for an uncertain current attempt appends one reconciliation record; it does not overwrite its original usage. Mutable attempt balances project reported charges and retained reservations. Provider token counts and charges stay null when absent. A known charge releases its estimate reservation; uncertain or missing charges retain it. A pre-dispatch expired lease releases its reservation and returns to pending; a dispatched expired lease becomes `unknown_outcome` and cannot be reclaimed.
+
+Retrieval IDs must be a stable key derived from the run, prompt, repetition, and retrieval options. Retrieval ownership is compare-and-set, bundle contents are immutable after success, and failed or uncertain retrievals cannot be claimed again. Retrieval charges use a distinct attempt key and are counted once per bundle.
