@@ -397,3 +397,181 @@ it("treats an invalid HTTP 200 generation response as ambiguous instead of provi
     ),
   ).rejects.toMatchObject({ code: "provider_error" });
 });
+it.each(["failed", "cancelled"])(
+  "rejects a Perplexity HTTP 200 %s outcome and retains usage safely",
+  async (status) => {
+    const raw = {
+      id: "r",
+      model: "test-model",
+      status,
+      error: { code: "vendor_code", message: "DO NOT COPY VENDOR BODY" },
+      output: [],
+      usage: { input_tokens: 7, output_tokens: 2 },
+    };
+    let failure: unknown;
+    try {
+      await executeProvider(
+        input("perplexity"),
+        { PERPLEXITY_API_KEY: "x" },
+        { fetch: async () => response(raw) },
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: `provider_${status}`,
+      result: {
+        raw_response: raw,
+        usage: { input_tokens: 7, output_tokens: 2 },
+        finish_reason: status,
+      },
+    });
+    expect((failure as Error).message).not.toContain("DO NOT COPY");
+  },
+);
+it.each([
+  {},
+  { status: "completed", output: [] },
+  {
+    id: "r",
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text: "" }] }],
+  },
+])("rejects a malformed or empty Perplexity HTTP 200 response", async (raw) => {
+  await expect(
+    executeProvider(
+      input("perplexity"),
+      { PERPLEXITY_API_KEY: "x" },
+      { fetch: async () => response(raw) },
+    ),
+  ).rejects.toMatchObject({ code: "provider_invalid_response" });
+});
+it("preserves incomplete partial output with an explicit truncation warning", async () => {
+  const raw = {
+    id: "r",
+    model: "test-model",
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+    output: [{ type: "message", content: [{ type: "output_text", text: "Partial answer" }] }],
+  };
+  const result = await executeProvider(
+    input("perplexity"),
+    { PERPLEXITY_API_KEY: "x" },
+    { fetch: async () => response(raw) },
+  );
+  expect(result.answer).toBe("Partial answer");
+  expect(result.finish_reason).toBe("incomplete");
+  expect(result.warnings.join(" ")).toMatch(/incomplete|truncat/i);
+  expect(result.raw_response).toEqual(raw);
+});
+it("distinguishes a genuine refusal from malformed blank output", async () => {
+  const raw = {
+    id: "r",
+    model: "test-model",
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "refusal", refusal: "Cannot assist" }] }],
+  };
+  const result = await executeProvider(
+    input("perplexity"),
+    { PERPLEXITY_API_KEY: "x" },
+    { fetch: async () => response(raw) },
+  );
+  expect(result.warnings.join(" ")).toMatch(/refus/i);
+  expect(result.raw_response).toEqual(raw);
+});
+it("rejects a controlled Perplexity grounded model with cached retrieval before HTTP", async () => {
+  let calls = 0;
+  const request = input("perplexity", { mode: "controlled", engine: "exa" });
+  request.target.model = "perplexity/sonar";
+  request.retrieval = {
+    id: "cached",
+    queries: ["q"],
+    sources: [],
+    context: "cached context",
+    raw_response: [],
+    estimated_cost_usd: 0.02,
+    reported_cost_usd: null,
+    created_at: new Date().toISOString(),
+  };
+  await expect(
+    executeProvider(
+      request,
+      { PERPLEXITY_API_KEY: "x" },
+      {
+        fetch: async () => {
+          calls++;
+          return response({});
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "unsupported_configuration" });
+  expect(calls).toBe(0);
+});
+it("preserves OpenAI incomplete output and native truncation reason", async () => {
+  const raw = {
+    ...openai,
+    status: "incomplete",
+    incomplete_details: { reason: "max_output_tokens" },
+  };
+  const result = await executeProvider(
+    input(),
+    { OPENAI_API_KEY: "x" },
+    { fetch: async () => response(raw) },
+  );
+  expect(result.finish_reason).toBe("incomplete");
+  expect(result.warnings.join(" ")).toMatch(/truncat/i);
+  expect(result.raw_response).toEqual(raw);
+});
+it("classifies a captured OpenAI failed outcome even when the SDK throws", async () => {
+  const raw = {
+    ...openai,
+    status: "failed",
+    output: [],
+    error: { code: "server_error", message: "PRIVATE VENDOR DETAIL" },
+  };
+  await expect(
+    executeProvider(input(), { OPENAI_API_KEY: "x" }, { fetch: async () => response(raw) }),
+  ).rejects.toMatchObject({
+    code: "provider_failed",
+    result: { raw_response: raw, usage: { input_tokens: 12 } },
+  });
+});
+it("preserves an Anthropic refusal without calling it malformed empty output", async () => {
+  const raw = {
+    id: "msg_refusal",
+    type: "message",
+    role: "assistant",
+    model: "test-model",
+    content: [],
+    stop_reason: "refusal",
+    stop_sequence: null,
+    usage: { input_tokens: 5, output_tokens: 0 },
+  };
+  const result = await executeProvider(
+    input("anthropic"),
+    { ANTHROPIC_API_KEY: "x" },
+    { fetch: async () => response(raw) },
+  );
+  expect(result.answer).toBe("");
+  expect(result.warnings.join(" ")).toMatch(/refus/i);
+  expect(result.raw_response).toEqual(raw);
+});
+it("rejects a Perplexity completed status that carries a vendor error", async () => {
+  const raw = {
+    id: "r",
+    model: "test-model",
+    status: "completed",
+    output: [{ type: "message", content: [{ type: "output_text", text: "Partial" }] }],
+    error: { code: "failed", message: "DO NOT COPY" },
+  };
+  await expect(
+    executeProvider(
+      input("perplexity"),
+      { PERPLEXITY_API_KEY: "x" },
+      { fetch: async () => response(raw) },
+    ),
+  ).rejects.toMatchObject({
+    code: "provider_failed",
+    result: { answer: "Partial", raw_response: raw },
+  });
+});

@@ -11,10 +11,15 @@ import {
   type Source,
 } from "../contracts.js";
 import { EXA_SEARCH_ESTIMATE_USD, targetAvailability, vertexCredentials } from "../targets.js";
-import { type Json, normalize, num, obj, records, source, str } from "./normalize.js";
+import { type Json, num, obj, records, source, str } from "./normalize.js";
 
 type Env = Record<string, string | undefined>;
 type Options = { fetch?: typeof fetch };
+
+import { validateCapturedFailure, validateOutcome } from "./outcomes.js";
+
+export { ProviderResponseError } from "./outcomes.js";
+
 async function http(
   fetcher: typeof fetch,
   url: string,
@@ -139,7 +144,7 @@ async function perplexity(
     .filter((c) => c.type === "output_text")
     .map((c) => str(c.text) ?? "")
     .join("");
-  return normalize(input, raw, answer, str(raw.status) ?? null);
+  return validateOutcome(input, raw, answer, str(raw.status) ?? null);
 }
 function checkInput(input: ProviderInput, env: Env) {
   input.signal.throwIfAborted();
@@ -216,9 +221,11 @@ export async function executeProvider(
       abortSignal: signal,
     });
     await captured;
-    return normalize(input, raw, result.text, result.finishReason);
+    return validateOutcome(input, raw, result.text, result.finishReason);
   } catch (error) {
     await captured;
+    if (error instanceof ResearchError) throw error;
+    validateCapturedFailure(input, raw);
     signal.throwIfAborted();
     throw safeError(error, responseStatus);
   }

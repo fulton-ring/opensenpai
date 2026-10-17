@@ -112,6 +112,16 @@ export function targetAvailability(
         "OpenRouter :online implicitly enables deprecated search; configure explicit native or controlled search",
     };
   }
+  if (
+    target.transport === "perplexity" &&
+    target.model.startsWith("perplexity/") &&
+    target.search.mode !== "native"
+  )
+    return {
+      available: false,
+      reason:
+        "Perplexity grounded models require native search; choose a non-search model for controlled/off modes",
+    };
   const key = {
     openai: "OPENAI_API_KEY",
     anthropic: "ANTHROPIC_API_KEY",
@@ -131,16 +141,6 @@ export function targetAvailability(
   } else if (!env[key]?.trim()) return { available: false, reason: `Missing ${key}` };
   if (target.search.mode === "controlled" && !env.EXA_API_KEY?.trim())
     return { available: false, reason: "Missing EXA_API_KEY" };
-  if (
-    target.transport === "perplexity" &&
-    target.model.startsWith("perplexity/") &&
-    target.search.mode !== "native"
-  )
-    return {
-      available: false,
-      reason:
-        "Perplexity grounded models require native search; choose a non-search model for controlled/off modes",
-    };
   return { available: true };
 }
 function observationEstimate(text: string, target: Target): number | null {
