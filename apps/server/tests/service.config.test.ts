@@ -31,3 +31,22 @@ describe("server configuration", () => {
     expect(() => loadConfig({ MCP_AUTH_TOKEN: "long-token-123456", ROLE: "invalid" })).toThrow();
   });
 });
+
+const cloudflareEnv = {
+  STORAGE_BACKEND: "cloudflare",
+  ROLE: "api",
+  OBSERVATION_DISPATCH_MODE: "external",
+  MCP_AUTH_TOKEN: "cloudflare-mcp-token-long",
+  INTERNAL_EXECUTION_TOKEN: "cloudflare-internal-token-long",
+};
+it("defaults to local libSQL and accepts Cloudflare without remote database credentials", () => {
+  expect(loadConfig({}, { transport: "stdio" }).storageBackend).toBe("libsql");
+  expect(loadConfig(cloudflareEnv)).toMatchObject({ storageBackend: "cloudflare", role: "api" });
+});
+it("restricts Cloudflare storage to its external API container profile", () => {
+  expect(() => loadConfig({ ...cloudflareEnv, ROLE: "all" })).toThrow(/Cloudflare/);
+  expect(() => loadConfig({ ...cloudflareEnv, OBSERVATION_DISPATCH_MODE: "native" })).toThrow(
+    /Cloudflare/,
+  );
+  expect(() => loadConfig({ ...cloudflareEnv, STORAGE_BACKEND: "unknown" })).toThrow();
+});

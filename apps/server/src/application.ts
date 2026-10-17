@@ -8,14 +8,21 @@ import { LibSQLStore } from "@mastra/libsql";
 import { ResearchError } from "@opensenpai/core/contracts";
 import { createRuntime, type RuntimeOptions } from "@opensenpai/core/runtime";
 import { ResearchService } from "@opensenpai/core/service";
-import { ResearchStore } from "@opensenpai/core/storage";
+import { type ResearchStorage, ResearchStore } from "@opensenpai/core/storage";
 import { loadTargets } from "@opensenpai/core/targets";
+import {
+  type BridgeFetch,
+  createCloudflareD1Storage,
+  createCloudflareResearchStorage,
+} from "./cloudflare-storage.js";
 import { type ApplicationOptions, loadConfig } from "./config.js";
 import { createHttpServer } from "./http.js";
 import { createResearchMcp } from "./mcp.js";
 
 export type CreateApplicationOptions = ApplicationOptions &
-  Pick<RuntimeOptions, "hooks" | "executeProvider" | "retrieveExa" | "pubsub" | "storage">;
+  Pick<RuntimeOptions, "hooks" | "executeProvider" | "retrieveExa" | "pubsub" | "storage"> & {
+    bridgeFetch?: BridgeFetch;
+  };
 async function ensureParent(url: string) {
   if (!url.startsWith("file:") || url.includes(":memory:")) return;
   const path = url.startsWith("file://") ? fileURLToPath(url) : url.slice(5);
@@ -29,22 +36,7 @@ export async function createApplication(
   const config = loadConfig(env, options);
   validateSharedInfrastructure(config, env.VALKEY_URL, Boolean(options.pubsub));
   const targets = loadTargets(env, options.targets);
-  await ensureParent(config.databaseUrl);
-  await ensureParent(config.mastraStorageUrl);
-  const client = createClient({
-    url: config.databaseUrl,
-    ...(env.DATABASE_AUTH_TOKEN ? { authToken: env.DATABASE_AUTH_TOKEN } : {}),
-  });
-  const store = new ResearchStore(client, config.workspaceId);
-  const nativeStorage =
-    options.storage ??
-    new LibSQLStore({
-      id: `opensenpai-${config.workspaceId}`,
-      url: config.mastraStorageUrl,
-      ...((env.MASTRA_STORAGE_AUTH_TOKEN ?? env.DATABASE_AUTH_TOKEN)
-        ? { authToken: env.MASTRA_STORAGE_AUTH_TOKEN ?? env.DATABASE_AUTH_TOKEN }
-        : {}),
-    });
+  const { store, nativeStorage } = await createStorage(config, env, options);
   const runtime = createRuntime({
     store,
     env,
@@ -92,6 +84,37 @@ export async function createApplication(
   }
 }
 
+async function createStorage(
+  config: ReturnType<typeof loadConfig>,
+  env: Record<string, string | undefined>,
+  options: CreateApplicationOptions,
+) {
+  if (config.storageBackend === "cloudflare")
+    return {
+      store: createCloudflareResearchStorage(config.workspaceId, options.bridgeFetch),
+      nativeStorage:
+        options.storage ?? createCloudflareD1Storage(config.workspaceId, options.bridgeFetch),
+    };
+  await ensureParent(config.databaseUrl);
+  await ensureParent(config.mastraStorageUrl);
+  const client = createClient({
+    url: config.databaseUrl,
+    ...(env.DATABASE_AUTH_TOKEN ? { authToken: env.DATABASE_AUTH_TOKEN } : {}),
+  });
+  return {
+    store: new ResearchStore(client, config.workspaceId),
+    nativeStorage:
+      options.storage ??
+      new LibSQLStore({
+        id: `opensenpai-${config.workspaceId}`,
+        url: config.mastraStorageUrl,
+        ...((env.MASTRA_STORAGE_AUTH_TOKEN ?? env.DATABASE_AUTH_TOKEN)
+          ? { authToken: env.MASTRA_STORAGE_AUTH_TOKEN ?? env.DATABASE_AUTH_TOKEN }
+          : {}),
+      }),
+  };
+}
+
 function createCloser(
   runtime: { stop(): Promise<void> },
   mcp: { close(): Promise<void> },
@@ -131,7 +154,7 @@ function createCloser(
 
 async function startTransport(
   config: ReturnType<typeof loadConfig>,
-  store: ResearchStore,
+  store: ResearchStorage,
   runtime: ReturnType<typeof createRuntime>,
   mcp: ReturnType<typeof createResearchMcp>,
   listen?: boolean,

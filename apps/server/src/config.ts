@@ -39,6 +39,12 @@ export function loadConfig(
   const dispatchMode = z
     .enum(["native", "external"])
     .parse(env.OBSERVATION_DISPATCH_MODE ?? "native");
+  const storageBackend = z.enum(["libsql", "cloudflare"]).parse(env.STORAGE_BACKEND ?? "libsql");
+  if (storageBackend === "cloudflare" && (role !== "api" || dispatchMode !== "external"))
+    throw new ResearchError(
+      "INVALID_CONFIG",
+      "Cloudflare storage requires role api and external dispatch in the hosted container.",
+    );
   const mcpToken = env.MCP_AUTH_TOKEN;
   const internalToken = env.INTERNAL_EXECUTION_TOKEN;
   validateAuth(role, transport, dispatchMode, mcpToken, internalToken);
@@ -56,6 +62,7 @@ export function loadConfig(
     port,
     host,
     databaseUrl,
+    storageBackend,
     workspaceId,
     dispatchMode,
     mcpToken,
