@@ -1,0 +1,35 @@
+{
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "name": "@opensenpai/core",
+  "exports": {
+    "./contracts": "./dist/contracts.js",
+    "./targets": "./dist/targets.js",
+    "./service": "./dist/service.js",
+    "./providers": "./dist/providers/index.js",
+    "./storage": "./dist/storage/index.js",
+    "./runtime": "./dist/runtime/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "4.0.82",
+    "@ai-sdk/google-vertex": "5.0.115",
+    "@ai-sdk/openai": "4.0.96",
+    "@libsql/client": "0.18.0",
+    "@mastra/core": "1.78.0",
+    "@mastra/libsql": "1.26.2",
+    "@mastra/valkey-streams": "0.5.5",
+    "@openrouter/ai-sdk-provider": "3.1.0",
+    "ai": "7.0.143",
+    "zod": "4.6.7"
+  }
+}

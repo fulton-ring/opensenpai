@@ -1,5 +1,5 @@
+import { ResearchError } from "@opensenpai/core/contracts";
 import { z } from "zod";
-import { ResearchError } from "./contracts.js";
 
 export interface ApplicationOptions {
   role?: "all" | "api" | "worker";

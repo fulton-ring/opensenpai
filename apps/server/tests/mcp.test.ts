@@ -1,7 +1,7 @@
+import { ResearchError } from "@opensenpai/core/contracts";
+import type { ResearchService } from "@opensenpai/core/service";
 import { describe, expect, it } from "vitest";
-import { ResearchError } from "../src/contracts.js";
 import { createResearchMcp } from "../src/mcp.js";
-import type { ResearchService } from "../src/service.js";
 
 function service() {
   return {

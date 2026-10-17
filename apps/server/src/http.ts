@@ -1,9 +1,9 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MCPServer } from "@mastra/mcp";
-import type { Observation } from "./contracts.js";
+import type { Observation } from "@opensenpai/core/contracts";
+import type { ServiceStore } from "@opensenpai/core/service";
 import { publicError } from "./mcp.js";
-import type { ServiceStore } from "./service.js";
 
 export interface HttpOptions {
   mcp?: Pick<MCPServer, "startHTTP">;

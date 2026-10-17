@@ -5,14 +5,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
 import { LibSQLStore } from "@mastra/libsql";
+import { ResearchError } from "@opensenpai/core/contracts";
+import { createRuntime, type RuntimeOptions } from "@opensenpai/core/runtime";
+import { ResearchService } from "@opensenpai/core/service";
+import { ResearchStore } from "@opensenpai/core/storage";
+import { loadTargets } from "@opensenpai/core/targets";
 import { type ApplicationOptions, loadConfig } from "./config.js";
-import { ResearchError } from "./contracts.js";
 import { createHttpServer } from "./http.js";
 import { createResearchMcp } from "./mcp.js";
-import { createRuntime, type RuntimeOptions } from "./runtime/index.js";
-import { ResearchService } from "./service.js";
-import { ResearchStore } from "./storage/index.js";
-import { loadTargets } from "./targets.js";
 
 export type CreateApplicationOptions = ApplicationOptions &
   Pick<RuntimeOptions, "hooks" | "executeProvider" | "retrieveExa" | "pubsub" | "storage">;

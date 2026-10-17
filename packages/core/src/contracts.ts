@@ -225,7 +225,11 @@ export interface SpendAuthorization {
 
 export interface ExecutionHooks {
   authorize?: (attempt: SpendAuthorization) => Promise<void>;
-  settled?: (attempt: SpendAuthorization, outcome: ObservationStatus, usage: Usage | null) => Promise<void>;
+  settled?: (
+    attempt: SpendAuthorization,
+    outcome: ObservationStatus,
+    usage: Usage | null,
+  ) => Promise<void>;
 }
 
 export interface RetrievalRecord {

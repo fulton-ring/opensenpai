@@ -18,7 +18,16 @@ export class OpenSenpaiContainer extends Container<Environment> {
   defaultPort = 4111;
   sleepAfter = "5m";
   enableInternet = true;
-  entrypoint = ["node", "dist/cli.js", "--role", "api", "--transport", "http", "--port", "4111"];
+  entrypoint = [
+    "node",
+    "apps/server/dist/cli.js",
+    "--role",
+    "api",
+    "--transport",
+    "http",
+    "--port",
+    "4111",
+  ];
   envVars = applicationEnvironment(this.env);
 }
 

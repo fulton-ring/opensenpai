@@ -108,10 +108,12 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
     full: values.full ?? env.E2E_FULL === "1",
     model: values.model ?? env.E2E_AGENT_MODEL ?? "claude-haiku-5-5",
     serverEntry: resolve(
-      values["server-entry"] ?? env.E2E_SERVER_ENTRY ?? join(ROOT, "dist/cli.js"),
+      values["server-entry"] ?? env.E2E_SERVER_ENTRY ?? join(ROOT, "apps/server/dist/cli.js"),
     ),
     storeModule: resolve(
-      values["store-module"] ?? env.E2E_STORE_MODULE ?? join(ROOT, "dist/store.js"),
+      values["store-module"] ??
+        env.E2E_STORE_MODULE ??
+        join(ROOT, "packages/core/dist/storage/index.js"),
     ),
     agentBin: values["agent-bin"] ?? env.E2E_AGENT_BIN ?? "claude",
     workspace: values.workspace ?? env.E2E_WORKSPACE_ID ?? "local",

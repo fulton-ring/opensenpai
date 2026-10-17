@@ -5,6 +5,12 @@
 .worktrees
 node_modules
 dist
+**/node_modules
+**/dist
+**/.turbo
+.turbo
+.artifacts
+.pnpm-store
 .mastra
 .wrangler
 data

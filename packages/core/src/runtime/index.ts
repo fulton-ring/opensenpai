@@ -38,7 +38,7 @@ function workflows(executor: ObservationExecutor) {
   };
 }
 
-class Runtime {
+export class Runtime {
   readonly mastra: Mastra;
   private readonly executor: ObservationExecutor;
   private readonly ownedPubsub: ValkeyStreamsPubSub | undefined;

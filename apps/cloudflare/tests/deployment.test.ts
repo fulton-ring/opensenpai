@@ -5,7 +5,7 @@ import {
   consumeObservations,
   dispatchOutbox,
   handleRequest,
-} from "../deploy/cloudflare/handlers.js";
+} from "../src/handlers.js";
 
 const token = "internal-test-token";
 function environment(fetcher: (request: Request) => Promise<Response>) {
@@ -163,9 +163,7 @@ describe("Cloudflare deployment delivery", () => {
   });
 
   it("configures single bounded consumption and a dead letter queue", async () => {
-    const config = JSON.parse(
-      await readFile(new URL("../deploy/cloudflare/wrangler.json", import.meta.url), "utf8"),
-    );
+    const config = JSON.parse(await readFile(new URL("../wrangler.json", import.meta.url), "utf8"));
     expect(config.queues.consumers[0]).toMatchObject({
       max_batch_size: 1,
       max_concurrency: 1,

@@ -8,6 +8,9 @@ dist/
 .worktrees/
 data/
 artifacts/
+.artifacts/
+.turbo/
+.pnpm-store/
 coverage/
 *.log
 .DS_Store

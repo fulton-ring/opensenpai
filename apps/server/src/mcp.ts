@@ -1,8 +1,8 @@
 import { createTool } from "@mastra/core/tools";
 import { MCPServer } from "@mastra/mcp";
+import { ResearchError, runInputSchema } from "@opensenpai/core/contracts";
+import type { ResearchService } from "@opensenpai/core/service";
 import { z } from "zod";
-import { ResearchError, runInputSchema } from "./contracts.js";
-import type { ResearchService } from "./service.js";
 
 export function publicError(error: unknown) {
   if (error instanceof ResearchError)
