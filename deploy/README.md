@@ -1,6 +1,6 @@
 # Deployment
 
-Node 24 LTS and pnpm 10.30.0 are the supported build toolchain. One image contains the CLI, native Mastra MCP server, storage, and workflow runtime. Secrets are supplied at runtime; the Dockerfile copies only manifests, source, and compiled output.
+Node 24 LTS and pnpm 10.30.0 are the supported build toolchain. Turborepo builds `apps/server` and its `packages/core` dependency for the Docker image; `apps/cloudflare` contains the ingress and queue adapter. One image contains the CLI, native Mastra MCP server, storage, and workflow runtime. Secrets are supplied at runtime; the Dockerfile copies only manifests, source, and compiled output.
 
 ## Standalone Docker
 
@@ -44,13 +44,13 @@ Cloudflare's [Container class](https://developers.cloudflare.com/containers/api/
 Run local build checks from the repository root:
 
 ```sh
-pnpm exec tsc --noEmit -p deploy/cloudflare/tsconfig.json
+pnpm --filter @opensenpai/cloudflare typecheck
 pnpm test tests/deployment.test.ts
-pnpm exec wrangler deploy --dry-run --containers-rollout none --config deploy/cloudflare/wrangler.json
+pnpm exec wrangler deploy --dry-run --containers-rollout none --config apps/cloudflare/wrangler.json
 docker build --platform linux/amd64 -t opensenpai:cloudflare .
 ```
 
-The `--containers-rollout none` command verifies the Worker bundle and configuration without building an image or accessing an account. A complete `wrangler deploy --dry-run --config deploy/cloudflare/wrangler.json` also builds the configured Linux image. CI runs the complete dry run and Docker build. Neither command publishes the Worker.
+The `--containers-rollout none` command verifies the Worker bundle and configuration without building an image or accessing an account. A complete `wrangler deploy --dry-run --config apps/cloudflare/wrangler.json` also builds the configured Linux image. CI runs the complete dry run and Docker build. Neither command publishes the Worker.
 
 Create the queues and supply runtime secrets before deploying:
 
@@ -58,19 +58,19 @@ Create the queues and supply runtime secrets before deploying:
 pnpm exec wrangler login
 pnpm exec wrangler queues create opensenpai-observations
 pnpm exec wrangler queues create opensenpai-observations-dlq
-pnpm exec wrangler secret put DATABASE_URL --config deploy/cloudflare/wrangler.json
-pnpm exec wrangler secret put DATABASE_AUTH_TOKEN --config deploy/cloudflare/wrangler.json
-pnpm exec wrangler secret put MCP_AUTH_TOKEN --config deploy/cloudflare/wrangler.json
-pnpm exec wrangler secret put INTERNAL_EXECUTION_TOKEN --config deploy/cloudflare/wrangler.json
-pnpm exec wrangler secret put TARGETS_JSON --config deploy/cloudflare/wrangler.json
+pnpm exec wrangler secret put DATABASE_URL --config apps/cloudflare/wrangler.json
+pnpm exec wrangler secret put DATABASE_AUTH_TOKEN --config apps/cloudflare/wrangler.json
+pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/cloudflare/wrangler.json
+pnpm exec wrangler secret put INTERNAL_EXECUTION_TOKEN --config apps/cloudflare/wrangler.json
+pnpm exec wrangler secret put TARGETS_JSON --config apps/cloudflare/wrangler.json
 ```
 
-Use independent random tokens for MCP and internal execution. Add each provider credential referenced by the targets with `wrangler secret put <ENV_NAME> --config deploy/cloudflare/wrangler.json`. String environment bindings are forwarded to the container at startup; queue and Durable Object service bindings are not forwarded. Set `WORKSPACE_ID` in `deploy/cloudflare/wrangler.json`. `DATABASE_URL` must begin with `libsql://`, `https://`, or `http://`; local files are rejected on Cloudflare.
+Use independent random tokens for MCP and internal execution. Add each provider credential referenced by the targets with `wrangler secret put <ENV_NAME> --config apps/cloudflare/wrangler.json`. String environment bindings are forwarded to the container at startup; queue and Durable Object service bindings are not forwarded. Set `WORKSPACE_ID` in `apps/cloudflare/wrangler.json`. `DATABASE_URL` must begin with `libsql://`, `https://`, or `http://`; local files are rejected on Cloudflare.
 
 Deploy when the account and runtime configuration are ready:
 
 ```sh
-pnpm exec wrangler deploy --config deploy/cloudflare/wrangler.json
+pnpm exec wrangler deploy --config apps/cloudflare/wrangler.json
 ```
 
 The Worker exposes `/mcp`, `/health`, and `/ready`. Internal observation endpoints are inaccessible through ingress. A single named container and one queue consumer limit application concurrency. Provider execution occurs only inside an awaited authenticated queue request, using the shared bounded observation workflow; generic detached Mastra workers and automatic research scheduling are disabled in this profile.

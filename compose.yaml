@@ -12,6 +12,7 @@ services:
       - path: .env
         required: false
     environment:
+      HOST: 0.0.0.0
       DATABASE_URL: ${DATABASE_URL:-file:/app/data/opensenpai.db}
       MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in your environment or .env}
       WORKSPACE_ID: ${WORKSPACE_ID:-local}
