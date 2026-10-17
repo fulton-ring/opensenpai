@@ -206,6 +206,15 @@ export class ResearchStore {
       args,
     );
   }
+  async resetPendingQueue(): Promise<number> {
+    return this.transaction(async (tx) => {
+      const result = await tx.execute({
+        sql: "UPDATE app_observations SET queued=0 WHERE workspace_id=? AND queued=1 AND json_extract(data,'$.status')='pending'",
+        args: [this.workspaceId],
+      });
+      return result.rowsAffected;
+    });
+  }
   async markQueued(id: string) {
     await this.transaction(async (tx) => {
       await tx.execute({
@@ -466,6 +475,11 @@ export class ResearchStore {
         }
       : null;
     await writeObservation(tx, row);
+    if (outcome === "pending")
+      await tx.execute({
+        sql: "UPDATE app_observations SET queued=0 WHERE workspace_id=? AND id=?",
+        args: [this.workspaceId, row.id],
+      });
     if (row.attempt_id)
       await this.settle(
         tx,

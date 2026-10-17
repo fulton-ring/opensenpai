@@ -516,3 +516,32 @@ it("filters unpublished outbox rows by run before applying the page limit", asyn
   expect(await a.listUnqueued(1, run.id)).toEqual([]);
   expect(await a.listUnqueued(1)).toHaveLength(1);
 });
+
+it("republishes safely recovered pre-dispatch claims through the outbox", async () => {
+  const a = await store();
+  const item = await observation(a);
+  await a.markQueued(item.id);
+  await a.claim(item.id, "a", 1);
+  now += 2;
+  await a.recoverExpired();
+  expect((await a.listUnqueued()).map((row) => row.id)).toContain(item.id);
+});
+
+it("resets only pending workspace queue flags for combined-process startup repair", async () => {
+  const a = await store();
+  const b = await store("other");
+  const pending = await observation(a);
+  const other = await observation(b);
+  const { run } = await a.createRun({ ...input, idempotency_key: "running" }, [target], estimate);
+  const running = (await a.getResults({ run_id: run.id })).observations[0];
+  if (!running) throw new Error("Missing observation");
+  await a.markQueued(pending.id);
+  await b.markQueued(other.id);
+  await a.markQueued(running.id);
+  await a.claim(running.id, "a");
+  expect(await a.resetPendingQueue()).toBe(1);
+  expect(await a.resetPendingQueue()).toBe(0);
+  expect((await a.listUnqueued()).map((row) => row.id)).toEqual([pending.id]);
+  expect(await b.listUnqueued()).toEqual([]);
+  expect((await a.getObservation(running.id))?.status).toBe("running");
+});
