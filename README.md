@@ -106,7 +106,7 @@ For example, ask an agent: “Use OpenSenpai to evaluate Fulton Ring's public AI
 }
 ```
 
-`start_run` returns `{ "run": { "id": "..." }, "created": true }`. Poll `get_run` with that `run_id`, then call `get_results` with `{ "run_id": "...", "include_raw": false }`. Follow `next_cursor` until it is null. Reusing the same idempotency key and payload returns the existing run; changing the payload under that key conflicts. The current limit is 100 observations per run.
+`start_run` returns `{ "run": { "id": "..." }, "created": true }`. Poll `get_run` with that `run_id`, then call `get_results` with `{ "run_id": "...", "include_raw": false }`. Compact results retain answers, source URLs/titles, citation locations, and usage; `include_raw:true` also includes full source text, metadata, and provider payloads. Follow `next_cursor` until it is null. Reusing the same idempotency key and payload returns the existing run; changing the payload under that key conflicts. The current limit is 100 observations per run.
 
 Native search lets the provider decide how to search. Controlled Exa retrieval shares an immutable source bundle across matching observations, making comparisons easier. Retrieved sources, provider citations, and URLs extracted from answer text are stored separately. They are not interchangeable evidence of search execution.
 
@@ -124,11 +124,15 @@ Standalone Docker, split Compose with libSQL/Valkey, and Cloudflare deployment i
 
 Workspace-scoped storage and execution authorization/settlement hooks provide a foundation for a hosted service. The CLI uses one trusted `WORKSPACE_ID`; customer authentication, account provisioning, subscriptions, and billing are not implemented. A hosted integration must resolve workspace identity before constructing the service and supply its own authorization policy.
 
+See [the hosted service boundary](docs/hosted-service.md) for prepaid credits, authenticated workspace routing, and settlement responsibilities.
+
 ## Verification
 
 ```sh
 pnpm check
 ```
+
+Biome enforces a maximum of 999 lines per source file, including blank lines. `pnpm lint` also checks that source, test, and script directories contain at most ten direct files; repository-root configuration files are exempt. CI runs both checks. Function-size, complexity, explicit typing, and floating-promise rules provide the JPL-style guardrails.
 
 Normal tests use deterministic fixtures. Paid external-agent acceptance is opt-in and requires a Claude CLI, explicit agent credentials, service credentials for the selected target, and a running HTTP server. The default agent provider is Anthropic and requires `ANTHROPIC_API_KEY`:
 

@@ -19,6 +19,7 @@ async function setup(
   storageFails = false,
 ) {
   let calls = 0;
+  const events: string[] = [];
   const options = {
     mcpToken: token,
     internalToken: internal,
@@ -41,8 +42,13 @@ async function setup(
         return { observations: [], next_cursor: null };
       },
       async listUnqueued() {
+        events.push("list");
         if (storageFails) throw new Error("SECRET_DATABASE_TOKEN connection rejected");
         return [{ id: "o" }];
+      },
+      async recoverExpired() {
+        events.push("recover");
+        return 0;
       },
       async markQueued() {},
       async getObservation() {
@@ -62,11 +68,21 @@ async function setup(
   return {
     url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
     calls: () => calls,
+    events,
     server,
   };
 }
 const auth = (value: string) => ({ Authorization: `Bearer ${value}` });
 describe("HTTP authentication and queue durability", () => {
+  it("repairs expired leases before exposing the accepted dispatch outbox", async () => {
+    const test = await setup();
+    const response = await fetch(`${test.url}/internal/observations/outbox`, {
+      headers: auth(internal),
+    });
+    expect(response.status).toBe(200);
+    expect(test.events).toEqual(["recover", "list"]);
+    expect(test.calls()).toBe(0);
+  });
   it("protects MCP and audit while exposing public liveness", async () => {
     const test = await setup();
     expect((await fetch(`${test.url}/health`)).status).toBe(200);

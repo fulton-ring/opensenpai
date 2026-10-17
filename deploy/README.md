@@ -4,7 +4,7 @@ Node 24 LTS and pnpm 10.30.0 are the supported build toolchain. Turborepo builds
 
 ## Standalone Docker
 
-Create your ignored `.env` from the root example and set `MCP_AUTH_TOKEN`, target configuration, and provider credentials. Local mock targets work without paid API credentials.
+Create your ignored `.env` from the root example and set `MCP_AUTH_TOKEN`, target configuration, and provider credentials. Listing targets and estimating runs do not make paid calls.
 
 ```sh
 docker compose up --build -d
@@ -32,6 +32,8 @@ docker compose -f compose.split.yaml --profile split up --build -d
 ```
 
 Both processes must share `WORKSPACE_ID` and target configuration. Back up the database volume or remote service independently of container images. The split profile is intended for trusted private networks; database and Valkey ports are not published.
+
+For a local file backup, stop the application cleanly, copy the research database and its sibling Mastra metadata database, then restart. Restore with the application stopped, preserving writable ownership. For remote libSQL, use the server or managed provider's snapshot/restore facilities. Keep provider credentials outside database backups.
 
 ## Cloudflare compute
 

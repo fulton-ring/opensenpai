@@ -10,6 +10,7 @@ export interface HttpOptions {
   store: Pick<ServiceStore, "getRun" | "getResults"> & {
     listToolCalls(runId?: string): Promise<unknown[]>;
     listUnqueued(limit?: number): Promise<Observation[]>;
+    recoverExpired(): Promise<number>;
     markQueued(id: string): Promise<void>;
     getObservation(id: string): Promise<Observation | null>;
   };
@@ -127,10 +128,12 @@ async function routes(options: HttpOptions, req: IncomingMessage, res: ServerRes
     return json(res, 200, {
       toolCalls: await options.store.listToolCalls(url.searchParams.get("run_id") ?? undefined),
     });
-  if (req.method === "GET" && url.pathname === "/internal/observations/outbox")
+  if (req.method === "GET" && url.pathname === "/internal/observations/outbox") {
+    await options.store.recoverExpired();
     return json(res, 200, {
       observations: (await options.store.listUnqueued(100)).map(({ id }) => ({ id })),
     });
+  }
   const run = /^\/internal\/runs\/([^/]+)(\/results)?$/.exec(url.pathname);
   if (req.method === "GET" && run) return runRoute(options, res, url, run);
   const observation = /^\/internal\/observations\/([^/]+)\/(queued|execute)$/.exec(url.pathname);

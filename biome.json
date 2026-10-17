@@ -19,6 +19,12 @@
         }
       },
       "suspicious": { "noExplicitAny": "error", "noConsole": "error" },
+      "style": {
+        "noExcessiveLinesPerFile": {
+          "level": "error",
+          "options": { "maxLines": 999, "skipBlankLines": false }
+        }
+      },
       "nursery": { "noFloatingPromises": "error" }
     }
   },
