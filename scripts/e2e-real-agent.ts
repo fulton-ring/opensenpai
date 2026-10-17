@@ -23,6 +23,7 @@ type Options = {
   targets: string[];
   outputDir: string;
   full: boolean;
+  agentProvider: "anthropic" | "openrouter";
   model: string;
   serverEntry: string;
   storeModule: string;
@@ -51,6 +52,32 @@ type Reader = {
   close(): Promise<void>;
 };
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const AGENT_MODELS = { anthropic: "claude-haiku-5-5", openrouter: "anthropic/claude-haiku-5.5" };
+
+function agentProvider(env: NodeJS.ProcessEnv): Options["agentProvider"] {
+  const provider = env.E2E_AGENT_PROVIDER ?? "anthropic";
+  if (provider !== "anthropic" && provider !== "openrouter")
+    throw new Error("E2E_AGENT_PROVIDER must be anthropic or openrouter");
+  return provider;
+}
+
+function agentAuth(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (agentProvider(env) === "openrouter") {
+    if (!env.OPENROUTER_API_KEY?.trim())
+      throw new Error("Provide OPENROUTER_API_KEY for the OpenRouter external agent");
+    // https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration
+    return {
+      ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+      ANTHROPIC_AUTH_TOKEN: env.OPENROUTER_API_KEY,
+      ANTHROPIC_API_KEY: "",
+    };
+  }
+  if (!env.ANTHROPIC_API_KEY?.trim())
+    throw new Error(
+      "Provide explicit ANTHROPIC_API_KEY authentication; bare Claude does not read OAuth credentials",
+    );
+  return { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY };
+}
 
 function checkTargets(targets: string[]): void {
   if (
@@ -106,7 +133,8 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
       values["output-dir"] ?? env.E2E_OUTPUT_DIR ?? join(ROOT, ".artifacts/real-agent"),
     ),
     full: values.full ?? env.E2E_FULL === "1",
-    model: values.model ?? env.E2E_AGENT_MODEL ?? "claude-haiku-5-5",
+    agentProvider: agentProvider(env),
+    model: values.model ?? env.E2E_AGENT_MODEL ?? AGENT_MODELS[agentProvider(env)],
     serverEntry: resolve(
       values["server-entry"] ?? env.E2E_SERVER_ENTRY ?? join(ROOT, "apps/server/dist/cli.js"),
     ),
@@ -121,9 +149,10 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
 }
 
 export function agentEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
-  const allowed = ["PATH", "LANG", "LC_ALL", "ANTHROPIC_API_KEY"];
+  const allowed = ["PATH", "LANG", "LC_ALL"];
   return {
     ...Object.fromEntries(allowed.filter((key) => env[key]).map((key) => [key, env[key]])),
+    ...agentAuth(env),
     TMPDIR: cwd,
     // https://code.claude.com/docs/en/env-vars#variables
     CLAUDE_CONFIG_DIR: join(cwd, ".claude"),
@@ -382,10 +411,7 @@ async function execute(
 
 export async function main(args = process.argv.slice(2), env = process.env): Promise<void> {
   const options = harnessOptions(args, env);
-  if (!env.ANTHROPIC_API_KEY)
-    throw new Error(
-      "Provide explicit ANTHROPIC_API_KEY authentication; bare Claude does not read OAuth credentials",
-    );
+  agentAuth(env);
   await mkdir(options.outputDir, { recursive: true, mode: 0o700 });
   const ledgerPath = join(options.outputDir, "cumulative-spend.json");
   const lock = `${ledgerPath}.lock`;
@@ -409,7 +435,10 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
       : null;
     ledger = accountSpend(ledger, suite, {
       agentSucceeded: true,
-      agentCostUsd: evidence.agentCostUsd,
+      agentCostUsd:
+        options.agentProvider === "openrouter"
+          ? Math.max(2, evidence.agentCostUsd ?? 0)
+          : evidence.agentCostUsd,
       appSucceeded: true,
       appCostUsd: appCost,
     });
@@ -420,12 +449,13 @@ export async function main(args = process.argv.slice(2), env = process.env): Pro
         {
           suite,
           transport: options.transport,
+          agentProvider: options.agentProvider,
           targets: options.targets,
           evidence,
           ...verification,
           spend: ledger,
           budgetNote:
-            "Local reported/estimated accounting is not a vendor charge guarantee; failed or unknown outcomes retain full allowances.",
+            "Local reported/estimated accounting is not a vendor charge guarantee; failed or unknown outcomes retain full allowances. OpenRouter agents retain at least their full $2 allowance because CLI pricing can differ from gateway billing.",
         },
         secretValues(env),
       ),

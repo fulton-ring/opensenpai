@@ -130,16 +130,18 @@ Workspace-scoped storage and execution authorization/settlement hooks provide a 
 pnpm check
 ```
 
-Normal tests use deterministic fixtures. Paid external-agent acceptance is opt-in and requires a Claude CLI, explicit `ANTHROPIC_API_KEY` authentication, service credentials for the selected target, and a running HTTP server:
+Normal tests use deterministic fixtures. Paid external-agent acceptance is opt-in and requires a Claude CLI, explicit agent credentials, service credentials for the selected target, and a running HTTP server. The default agent provider is Anthropic and requires `ANTHROPIC_API_KEY`:
 
 ```sh
 OPENSENPAI_LIVE_TESTS=1 E2E_TARGETS=router-exa \
   pnpm exec tsx --env-file=.env scripts/e2e-real-agent.ts --transport http
 ```
 
+To use funded OpenRouter credits for the external agent, set `E2E_AGENT_PROVIDER=openrouter` and supply `OPENROUTER_API_KEY`. The harness uses the [documented Claude Code gateway integration](https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration), setting the child's bearer token and gateway URL while blanking its direct Anthropic API key. The default model is `anthropic/claude-haiku-5.5`; `--model` or `E2E_AGENT_MODEL` can override it. Provider selection does not change the parent environment or service target configuration.
+
 Add `--full` for five Fulton Ring research prompts, or use `--transport stdio` to have the external agent launch a temporary server/database. The harness isolates its working directory and Claude configuration, disables built-in tools and other MCP servers, and checks native tool calls against persisted server audits and results. Redacted transcripts, reports, and the cumulative spend ledger live in `.artifacts/real-agent/`.
 
-Each suite reserves up to $2 for the external agent and $1 for application calls; its run requests an estimated cap of $0.50. New suite reservations stop at $10 cumulative accounted spend, leaving $5 headroom in the $15 acceptance budget. Failed or unknown outcomes retain full allowances, and known overruns remain charged. Keep the same ledger between invocations. This is conservative local accounting, not an absolute guarantee of vendor charges.
+Each suite reserves up to $2 for the external agent and $1 for application calls; its run requests an estimated cap of $0.50. New suite reservations stop at $10 cumulative accounted spend, leaving $5 headroom in the $15 acceptance budget. Failed or unknown outcomes retain full allowances, and known overruns remain charged. OpenRouter agent suites retain at least the full $2 agent allowance because CLI cost estimates can differ from gateway billing; reports preserve the raw CLI figure and selected provider. Keep the same ledger between invocations. This is conservative local accounting, not an absolute guarantee of vendor charges.
 
 ## License
 

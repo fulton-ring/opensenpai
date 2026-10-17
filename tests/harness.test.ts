@@ -304,13 +304,27 @@ it("runs deterministic CLI fixtures through HTTP verification and persists faile
     expect(await readFile(join(artifactDir, reportName ?? "missing"), "utf8")).not.toContain(
       "nested-fixture-secret",
     );
+    await main(args, {
+      ...env,
+      E2E_AGENT_PROVIDER: "openrouter",
+      OPENROUTER_API_KEY: "fixture-router-token",
+    });
+    ledger = JSON.parse(await readFile(join(artifactDir, "cumulative-spend.json"), "utf8"));
+    expect(ledger.spentUsd).toBeCloseTo(2.06);
+    const gatewayEntry = ledger.entries.at(-1);
+    const gatewayReport = JSON.parse(
+      await readFile(join(artifactDir, `${gatewayEntry.id}.report.json`), "utf8"),
+    );
+    expect(gatewayReport.agentProvider).toBe("openrouter");
+    expect(gatewayReport.evidence.agentCostUsd).toBe(0.04);
+    expect(gatewayEntry.chargedUsd).toBeCloseTo(2.01);
     await writeFile(
       cli,
       `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(transcript([{ type: "result", total_cost_usd: 3, is_error: true }]))});\n`,
     );
     await expect(main(args, env)).rejects.toThrow(/agent did not finish/i);
     ledger = JSON.parse(await readFile(join(artifactDir, "cumulative-spend.json"), "utf8"));
-    expect(ledger.spentUsd).toBeCloseTo(4.05);
+    expect(ledger.spentUsd).toBeCloseTo(6.06);
     expect((await readdir(artifactDir)).some((name) => name.endsWith(".lock"))).toBe(false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -369,4 +383,55 @@ it("requires API-key authentication because bare Claude ignores OAuth", async ()
       CLAUDE_CODE_OAUTH_TOKEN: "not-supported-in-bare-mode",
     }),
   ).rejects.toThrow(/ANTHROPIC_API_KEY/);
+});
+
+it("isolates OpenRouter gateway authentication from the Anthropic account", async () => {
+  const { harnessOptions, agentEnvironment } = await import("../scripts/e2e-real-agent.js");
+  const env = {
+    OPENSENPAI_LIVE_TESTS: "1",
+    E2E_TARGETS: "router-exa",
+    E2E_AGENT_PROVIDER: "openrouter",
+    OPENROUTER_API_KEY: "router-agent-key",
+    ANTHROPIC_API_KEY: "must-not-leak",
+    ANTHROPIC_AUTH_TOKEN: "must-not-leak-either",
+    ANTHROPIC_BASE_URL: "https://untrusted.invalid",
+    CLAUDE_CODE_OAUTH_TOKEN: "oauth-must-not-leak",
+  };
+  expect(harnessOptions([], env).model).toBe("anthropic/claude-haiku-5.5");
+  const isolated = agentEnvironment(env, "/tmp/isolated");
+  expect(isolated.ANTHROPIC_AUTH_TOKEN).toBe("router-agent-key");
+  expect(isolated.ANTHROPIC_API_KEY).toBe("");
+  expect(isolated.ANTHROPIC_BASE_URL).toBe("https://openrouter.ai/api");
+  expect(isolated.OPENROUTER_API_KEY).toBeUndefined();
+  expect(isolated.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+  expect(JSON.stringify(isolated)).not.toContain("must-not-leak");
+  const direct = agentEnvironment({ ...env, E2E_AGENT_PROVIDER: "anthropic" }, "/tmp/isolated");
+  expect(direct.ANTHROPIC_API_KEY).toBe("must-not-leak");
+  expect(direct.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  expect(direct.ANTHROPIC_BASE_URL).toBeUndefined();
+  expect(direct.OPENROUTER_API_KEY).toBeUndefined();
+  expect(harnessOptions([], { ...env, E2E_AGENT_PROVIDER: "anthropic" }).model).toBe(
+    "claude-haiku-5-5",
+  );
+});
+
+it("rejects unknown agent providers and missing OpenRouter authentication before dispatch", async () => {
+  const { main, agentEnvironment } = await import("../scripts/e2e-real-agent.js");
+  expect(() => agentEnvironment({ E2E_AGENT_PROVIDER: "surprise" }, "/tmp/isolated")).toThrow(
+    /provider/i,
+  );
+  expect(() =>
+    agentEnvironment(
+      { E2E_AGENT_PROVIDER: "openrouter", ANTHROPIC_API_KEY: "wrong-provider" },
+      "/tmp/isolated",
+    ),
+  ).toThrow(/OPENROUTER_API_KEY/);
+  await expect(
+    main([], {
+      OPENSENPAI_LIVE_TESTS: "1",
+      E2E_TARGETS: "router-exa",
+      E2E_AGENT_PROVIDER: "openrouter",
+      ANTHROPIC_API_KEY: "wrong-provider",
+    }),
+  ).rejects.toThrow(/OPENROUTER_API_KEY/);
 });
