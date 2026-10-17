@@ -189,21 +189,25 @@ export async function executeProvider(
     : input.prompt.text;
   if (target.transport === "perplexity")
     return perplexity(input, env, fetcher, signal, instructions, prompt);
-  let raw: Json = {};
+  const responses: Json[] = [];
+  const pending: Promise<void>[] = [];
   let responseStatus: number | null = null;
-  let captured: Promise<void> = Promise.resolve();
   const capture: typeof fetch = async (u, init) => {
     const response = await fetcher(u, init);
     responseStatus = response.status;
-    captured = response
-      .clone()
-      .json()
-      .then(
-        (v) => {
-          raw = obj(v);
-        },
-        () => {},
-      );
+    const slot = responses.length;
+    responses.push({});
+    pending.push(
+      response
+        .clone()
+        .json()
+        .then(
+          (v) => {
+            responses[slot] = obj(v);
+          },
+          () => {},
+        ),
+    );
     return response;
   };
   const { model, tools }: { model: LanguageModel; tools: ToolSet | undefined } = native[
@@ -220,12 +224,15 @@ export async function executeProvider(
       maxRetries: 0,
       abortSignal: signal,
     });
-    await captured;
-    return validateOutcome(input, raw, result.text, result.finishReason);
+    await Promise.all(pending);
+    return validateOutcome(input, responses.at(-1) ?? {}, result.text, result.finishReason, {
+      responses,
+      sdk_usage: result.usage,
+    });
   } catch (error) {
-    await captured;
+    await Promise.all(pending);
     if (error instanceof ResearchError) throw error;
-    validateCapturedFailure(input, raw);
+    for (const raw of responses) validateCapturedFailure(input, raw, { responses });
     signal.throwIfAborted();
     throw safeError(error, responseStatus);
   }

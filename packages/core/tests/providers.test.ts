@@ -575,3 +575,18 @@ it("rejects a Perplexity completed status that carries a vendor error", async ()
     result: { answer: "Partial", raw_response: raw },
   });
 });
+it("leaves cost unknown when native search has a positive price and no usage count", async () => {
+  const request = input();
+  request.target.pricing = {
+    input_per_million: 1,
+    output_per_million: 2,
+    search_per_request: 0.01,
+  };
+  const result = await executeProvider(
+    request,
+    { OPENAI_API_KEY: "x" },
+    { fetch: async () => response({ ...openai, output: openai.output.slice(1) }) },
+  );
+  expect(result.usage.search_requests).toBeNull();
+  expect(result.usage.estimated_cost_usd).toBeNull();
+});

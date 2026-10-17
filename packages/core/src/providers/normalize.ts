@@ -1,3 +1,4 @@
+import type { LanguageModelUsage } from "ai";
 import type { Citation, ProviderInput, ProviderResult, Source } from "../contracts.js";
 export type Json = Record<string, unknown>;
 export const obj = (value: unknown): Json =>
@@ -23,8 +24,15 @@ interface Evidence {
   citations: Citation[];
   searches: number | null;
   engine: string | null;
+  executed: boolean;
 }
-const empty = (): Evidence => ({ sources: [], citations: [], searches: null, engine: null });
+const empty = (): Evidence => ({
+  sources: [],
+  citations: [],
+  searches: null,
+  engine: null,
+  executed: false,
+});
 function citation(value: unknown): Citation | null {
   const a = obj(value);
   const c = obj(a.url_citation ?? a);
@@ -134,6 +142,7 @@ function evidence(input: ProviderInput, raw: Json): Evidence {
       ? (str(raw.search_engine) ?? null)
       : (e.engine ?? (e.searches === null ? null : input.target.transport));
   e.sources = uniqueSources(e.sources);
+  e.executed = e.searches !== null && e.searches > 0;
   return e;
 }
 function warnings(input: ProviderInput, searches: number | null): string[] {
@@ -149,41 +158,95 @@ function warnings(input: ProviderInput, searches: number | null): string[] {
     messages.push("Native search max_uses is an estimate, not a provider-enforced hard cap.");
   return messages;
 }
-function usage(input: ProviderInput, raw: Json, searches: number | null): ProviderResult["usage"] {
-  const usage = obj(raw.usage ?? raw.usageMetadata);
-  const inputTokens = num(usage.input_tokens ?? usage.prompt_tokens ?? usage.promptTokenCount),
-    outputTokens = num(
-      usage.output_tokens ?? usage.completion_tokens ?? usage.candidatesTokenCount,
-    );
+export interface NormalizationContext {
+  responses?: Json[];
+  sdk_usage?: LanguageModelUsage;
+}
+function sumCounts(values: (number | null)[]): number | null {
+  return values.some((v) => v === null)
+    ? null
+    : values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
+}
+function combinedEvidence(input: ProviderInput, responses: Json[]): Evidence {
+  const items = responses.map((raw) => evidence(input, raw));
+  const engines = [...new Set(items.map((e) => e.engine).filter((e) => e !== null))];
+  return {
+    sources: uniqueSources(items.flatMap((e) => e.sources)),
+    citations: items.flatMap((e) => e.citations),
+    searches: sumCounts(items.map((e) => e.searches)),
+    engine: engines.length === 1 ? (engines[0] ?? null) : null,
+    executed: items.some((e) => e.executed),
+  };
+}
+function rawTokens(raw: Json) {
+  const u = obj(raw.usage ?? raw.usageMetadata);
+  const googleInput = num(u.promptTokenCount),
+    googleOutput = num(u.candidatesTokenCount);
+  return {
+    input:
+      num(u.input_tokens ?? u.prompt_tokens) ??
+      (googleInput === null ? null : googleInput + (num(u.toolUsePromptTokenCount) ?? 0)),
+    output:
+      num(u.output_tokens ?? u.completion_tokens) ??
+      (googleOutput === null ? null : googleOutput + (num(u.thoughtsTokenCount) ?? 0)),
+    reasoning: num(
+      obj(u.output_tokens_details ?? u.completion_tokens_details).reasoning_tokens ??
+        u.thoughtsTokenCount,
+    ),
+    cached: num(
+      obj(u.input_tokens_details ?? u.prompt_tokens_details).cached_tokens ??
+        u.cache_read_input_tokens ??
+        u.cachedContentTokenCount,
+    ),
+    cost: num(u.cost) ?? num(obj(u.cost).total_cost) ?? num(u.total_cost),
+    raw: u,
+  };
+}
+function usage(
+  input: ProviderInput,
+  responses: Json[],
+  searches: number | null,
+  sdk?: LanguageModelUsage,
+): ProviderResult["usage"] {
+  const tokens = responses.map(rawTokens);
+  const rawInput = sumCounts(tokens.map((t) => t.input)),
+    rawOutput = sumCounts(tokens.map((t) => t.output));
+  const inputTokens = rawInput === null ? null : (num(sdk?.inputTokens) ?? rawInput),
+    outputTokens = rawOutput === null ? null : (num(sdk?.outputTokens) ?? rawOutput);
+  const rawReasoning = sumCounts(tokens.map((t) => t.reasoning)),
+    rawCached = sumCounts(tokens.map((t) => t.cached));
   const price = input.target.pricing;
+  const unknownSearchCost =
+    input.target.search.mode === "native" &&
+    searches === null &&
+    (price?.search_per_request ?? 0) > 0;
   const estimated =
-    price && inputTokens !== null && outputTokens !== null
+    price && inputTokens !== null && outputTokens !== null && !unknownSearchCost
       ? (inputTokens * price.input_per_million + outputTokens * price.output_per_million) / 1e6 +
         (searches ?? 0) * price.search_per_request
       : null;
   return {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    reasoning_tokens: num(
-      obj(usage.output_tokens_details ?? usage.completion_tokens_details).reasoning_tokens ??
-        usage.thoughtsTokenCount,
-    ),
-    cached_tokens: num(
-      obj(usage.input_tokens_details ?? usage.prompt_tokens_details).cached_tokens ??
-        usage.cache_read_input_tokens ??
-        usage.cachedContentTokenCount,
-    ),
+    reasoning_tokens:
+      rawReasoning === null ? null : (num(sdk?.outputTokenDetails.reasoningTokens) ?? rawReasoning),
+    cached_tokens:
+      rawCached === null ? null : (num(sdk?.inputTokenDetails.cacheReadTokens) ?? rawCached),
     search_requests: searches,
-    reported_cost_usd: num(usage.cost) ?? num(obj(usage.cost).total_cost) ?? num(usage.total_cost),
+    reported_cost_usd: sumCounts(tokens.map((t) => t.cost)),
     estimated_cost_usd: estimated,
-    raw: usage,
+    raw:
+      responses.length === 1
+        ? tokens[0]?.raw
+        : { responses: tokens.map((t) => t.raw), sdk_aggregate: sdk ?? null },
   };
 }
 function searchActivity(input: ProviderInput, e: Evidence): ProviderResult["search_activity"] {
   if (input.target.search.mode === "controlled")
     return { requested: "controlled", observed: "executed", engine: "exa" };
-  const observed =
-    e.searches === null
+  const observed = e.executed
+    ? "executed"
+    : e.searches === null
       ? input.target.search.mode === "off"
         ? "not_observed"
         : "unknown"
@@ -197,8 +260,10 @@ export function normalize(
   raw: Json,
   answer: string,
   finish: string | null,
+  context: NormalizationContext = {},
 ): ProviderResult {
-  const e = evidence(input, raw);
+  const responses = context.responses?.length ? context.responses : [raw];
+  const e = combinedEvidence(input, responses);
   return {
     answer,
     requested_model: input.target.model,
@@ -216,8 +281,8 @@ export function normalize(
       ),
     ],
     search_activity: searchActivity(input, e),
-    usage: usage(input, raw, e.searches),
-    raw_response: raw,
+    usage: usage(input, responses, e.searches, context.sdk_usage),
+    raw_response: responses.length === 1 ? raw : { responses },
     warnings: warnings(input, e.searches),
   };
 }

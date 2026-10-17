@@ -1,5 +1,5 @@
 import { type ProviderInput, type ProviderResult, ResearchError } from "../contracts.js";
-import { type Json, normalize, obj, records, str } from "./normalize.js";
+import { type Json, type NormalizationContext, normalize, obj, records, str } from "./normalize.js";
 
 /** A terminal provider outcome whose usage and exact response remain available to settlement. */
 export class ProviderResponseError extends ResearchError {
@@ -67,10 +67,11 @@ export function validateOutcome(
   raw: Json,
   answer: string,
   finish: string | null,
+  context: NormalizationContext = {},
 ): ProviderResult {
   const status = str(raw.status);
   const actualFinish = status && status !== "completed" ? status : finish;
-  const result = normalize(input, raw, answer, actualFinish);
+  const result = normalize(input, raw, answer, actualFinish, context);
   rejectStatus(raw, result);
   checkPerplexityShape(input, raw, result);
   const refusal = hasRefusal(raw),
@@ -89,10 +90,14 @@ export function validateOutcome(
     );
   return result;
 }
-export function validateCapturedFailure(input: ProviderInput, raw: Json): void {
+export function validateCapturedFailure(
+  input: ProviderInput,
+  raw: Json,
+  context: NormalizationContext = {},
+): void {
   if (
     ["failed", "cancelled", "queued", "in_progress"].includes(String(raw.status)) ||
     (raw.error !== undefined && raw.error !== null)
   )
-    rejectStatus(raw, normalize(input, raw, "", str(raw.status) ?? null));
+    rejectStatus(raw, normalize(input, raw, "", str(raw.status) ?? null, context));
 }
