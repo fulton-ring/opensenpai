@@ -11,6 +11,12 @@ import {
 } from "./contracts.js";
 import { estimateRun, targetAvailability } from "./targets.js";
 
+export interface RunPageQuery {
+  project?: string;
+  limit?: number;
+  before?: string;
+  cursor?: string;
+}
 export interface ServiceStore {
   createRun(
     input: RunInput,
@@ -19,7 +25,8 @@ export interface ServiceStore {
   ): Promise<{ run: RunRecord; created: boolean }>;
   getRun(id: string): Promise<RunRecord | null>;
   listUnqueued(limit?: number, runId?: string): Promise<Observation[]>;
-  listRuns(query?: { project?: string; limit?: number; before?: string }): Promise<RunRecord[]>;
+  listRuns(query?: RunPageQuery): Promise<RunRecord[]>;
+  listRunPage(query?: RunPageQuery): Promise<{ runs: RunRecord[]; next_cursor: string | null }>;
   getResults(
     query: ResultQuery,
   ): Promise<{ observations: Observation[]; next_cursor: number | null }>;
@@ -142,9 +149,9 @@ export class ResearchService {
     });
   }
 
-  async listRuns(query: { project?: string; limit?: number; before?: string } = {}) {
+  async listRuns(query: RunPageQuery = {}) {
     await this.options.store.recordToolCall("list_runs");
-    return { runs: await this.options.store.listRuns({ ...query, limit: query.limit ?? 25 }) };
+    return this.options.store.listRunPage({ ...query, limit: query.limit ?? 25 });
   }
 
   async cancelRun({ run_id }: { run_id: string }) {

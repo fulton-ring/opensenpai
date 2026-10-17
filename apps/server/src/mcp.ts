@@ -68,7 +68,19 @@ const listInput = z
   .object({
     project: z.string().max(120).optional(),
     limit: z.number().int().min(1).max(100).default(25),
-    before: z.string().max(100).optional(),
+    before: z
+      .string()
+      .max(100)
+      .optional()
+      .describe(
+        "Legacy timestamp boundary; prefer cursor for complete pagination when timestamps tie.",
+      ),
+    cursor: z
+      .string()
+      .min(1)
+      .max(1000)
+      .optional()
+      .describe("Opaque next_cursor returned by the preceding list_runs page."),
   })
   .strict();
 
@@ -117,7 +129,7 @@ export function createResearchMcp(service: ResearchService) {
       ),
       list_runs: tool(
         "list_runs",
-        "List recent durable runs, optionally filtered by project and paginated before a creation timestamp.",
+        "List recent durable runs by project with a stable next_cursor. Pass that cursor unchanged for the next page; before remains a legacy timestamp filter.",
         listInput,
         true,
         (input) => service.listRuns(input),

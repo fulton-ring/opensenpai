@@ -45,6 +45,9 @@ describe("native MCP tools", () => {
     expect(mcp.getToolInfo("get_results")?.inputSchema).toMatchObject({
       properties: { include_raw: { default: false } },
     });
+    expect(mcp.getToolInfo("list_runs")?.inputSchema).toMatchObject({
+      properties: { cursor: { type: "string", maxLength: 1000 }, before: { type: "string" } },
+    });
     await mcp.close();
   });
   it("executes native tools and returns structured actionable errors without secret stacks", async () => {

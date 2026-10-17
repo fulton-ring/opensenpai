@@ -64,6 +64,9 @@ function setup(env: Record<string, string | undefined> = { OPENAI_API_KEY: "test
     async listRuns() {
       return saved ? [saved] : [];
     },
+    async listRunPage() {
+      return { runs: saved ? [saved] : [], next_cursor: null };
+    },
     async getResults() {
       return { observations: [], next_cursor: null };
     },
@@ -178,5 +181,27 @@ describe("run service boundaries", () => {
       code: "TARGET_UNAVAILABLE",
     });
     expect(test.toolCalls).toEqual([{ tool: "start_run", run_id: undefined }]);
+  });
+  it("returns the store's stable run cursor and forwards it on the next page", async () => {
+    const test = setup();
+    const queries: unknown[] = [];
+    test.service.options.store.listRunPage = async (query) => {
+      queries.push(query);
+      return { runs: [], next_cursor: query?.cursor ? null : "opaque-composite-cursor" };
+    };
+    const first = await test.service.listRuns({ project: "research", limit: 1 });
+    expect(first.next_cursor).toBe("opaque-composite-cursor");
+    expect(
+      await test.service.listRuns({
+        project: "research",
+        limit: 1,
+        cursor: first.next_cursor ?? undefined,
+      }),
+    ).toEqual({ runs: [], next_cursor: null });
+    expect(queries).toEqual([
+      { project: "research", limit: 1 },
+      { project: "research", limit: 1, cursor: "opaque-composite-cursor" },
+    ]);
+    expect(test.audits).toEqual(["list_runs", "list_runs"]);
   });
 });
