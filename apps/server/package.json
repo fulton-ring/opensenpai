@@ -13,7 +13,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "studio": "mastra dev --dir src/mastra --env ../../.env"
   },
   "dependencies": {
     "@opensenpai/core": "workspace:*",

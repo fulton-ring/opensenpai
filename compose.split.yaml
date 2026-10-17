@@ -13,6 +13,7 @@ x-application: &application
     DATABASE_URL: ${DATABASE_URL:-http://database:8080}
     DATABASE_AUTH_TOKEN: ${DATABASE_AUTH_TOKEN:-}
     MCP_AUTH_TOKEN: ${MCP_AUTH_TOKEN:?Set MCP_AUTH_TOKEN in your environment or .env}
+    INTERNAL_EXECUTION_TOKEN: ${INTERNAL_EXECUTION_TOKEN:?Set a separate INTERNAL_EXECUTION_TOKEN}
     WORKSPACE_ID: ${WORKSPACE_ID:-local}
     VALKEY_URL: redis://valkey:6379
   depends_on:

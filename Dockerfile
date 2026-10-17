@@ -33,6 +33,6 @@ USER node
 EXPOSE 4111
 VOLUME ["/app/data"]
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-  CMD ["node", "-e", "fetch('http://127.0.0.1:4111/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+  CMD ["node", "-e", "fetch('http://127.0.0.1:4111/ready',{headers:{authorization:'Bearer '+(process.env.INTERNAL_EXECUTION_TOKEN||'')}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
 ENTRYPOINT ["node", "apps/server/dist/cli.js"]
 CMD ["--role", "all", "--transport", "http", "--port", "4111"]

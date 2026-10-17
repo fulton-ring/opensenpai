@@ -45,7 +45,7 @@ Run local build checks from the repository root:
 
 ```sh
 pnpm --filter @opensenpai/cloudflare typecheck
-pnpm test tests/deployment.test.ts
+pnpm --filter @opensenpai/cloudflare test
 pnpm exec wrangler deploy --dry-run --containers-rollout none --config apps/cloudflare/wrangler.json
 docker build --platform linux/amd64 -t opensenpai:cloudflare .
 ```
@@ -66,6 +66,8 @@ pnpm exec wrangler secret put TARGETS_JSON --config apps/cloudflare/wrangler.jso
 ```
 
 Use independent random tokens for MCP and internal execution. Add each provider credential referenced by the targets with `wrangler secret put <ENV_NAME> --config apps/cloudflare/wrangler.json`. String environment bindings are forwarded to the container at startup; queue and Durable Object service bindings are not forwarded. Set `WORKSPACE_ID` in `apps/cloudflare/wrangler.json`. `DATABASE_URL` must begin with `libsql://`, `https://`, or `http://`; local files are rejected on Cloudflare.
+
+Set `MCP_ALLOWED_HOSTS` in Wrangler vars to your public Worker hostname (without scheme or port). The adapter adds the private container hostname and loopback hosts. Set `MCP_ALLOWED_ORIGINS` for browser clients connecting from a different origin.
 
 Deploy when the account and runtime configuration are ready:
 

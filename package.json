@@ -11,7 +11,7 @@
   "scripts": {
     "dev": "tsx --env-file-if-exists=.env apps/server/src/cli.ts",
     "start": "node --env-file-if-exists=.env apps/server/dist/cli.js",
-    "studio": "mastra dev --dir apps/server/src/mastra --env .env",
+    "studio": "pnpm --filter @opensenpai/server studio",
     "build": "turbo run build",
     "typecheck": "turbo run typecheck && tsc --noEmit -p tsconfig.json",
     "test": "turbo run test && vitest run",

@@ -1,10 +1,31 @@
 {
   "$schema": "https://turborepo.com/schema.json",
   "tasks": {
-    "build": { "dependsOn": ["^build"], "outputs": ["dist/**"] },
-    "typecheck": { "dependsOn": ["^build"], "outputs": [] },
-    "test": { "dependsOn": ["^build"], "outputs": [], "cache": false },
-    "lint": { "outputs": [] },
-    "dev": { "cache": false, "persistent": true }
-  }
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": [],
+      "cache": false
+    },
+    "lint": {
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  },
+  "globalPassThroughEnv": [
+    "WRANGLER_LOG_PATH",
+    "WRANGLER_SEND_METRICS",
+    "DOCKER_CONFIG",
+    "DOCKER_HOST"
+  ]
 }

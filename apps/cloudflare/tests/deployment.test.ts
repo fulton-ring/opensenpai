@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   applicationEnvironment,
@@ -45,6 +46,8 @@ describe("Cloudflare deployment delivery", () => {
       CUSTOM_TARGET_KEY: "provider-secret",
       NODE_ENV: "production",
       OBSERVATION_DISPATCH_MODE: "external",
+      HOST: "0.0.0.0",
+      MCP_ALLOWED_HOSTS: "localhost,127.0.0.1,container",
     });
   });
 
@@ -163,7 +166,9 @@ describe("Cloudflare deployment delivery", () => {
   });
 
   it("configures single bounded consumption and a dead letter queue", async () => {
-    const config = JSON.parse(await readFile(new URL("../wrangler.json", import.meta.url), "utf8"));
+    const config = JSON.parse(
+      await readFile(new NodeURL("../wrangler.json", import.meta.url), "utf8"),
+    );
     expect(config.queues.consumers[0]).toMatchObject({
       max_batch_size: 1,
       max_concurrency: 1,

@@ -23,4 +23,4 @@ jobs:
       - run: pnpm exec wrangler deploy --dry-run --config apps/cloudflare/wrangler.json
       - run: docker build --tag opensenpai:check .
       - run: MCP_AUTH_TOKEN=ci-mock-token docker compose config --quiet
-      - run: MCP_AUTH_TOKEN=ci-mock-token docker compose -f compose.split.yaml --profile split --profile database config --quiet
+      - run: MCP_AUTH_TOKEN=ci-mock-token INTERNAL_EXECUTION_TOKEN=ci-internal-token docker compose -f compose.split.yaml --profile split --profile database config --quiet

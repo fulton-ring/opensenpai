@@ -36,6 +36,8 @@ Choose only the credentials needed by your targets:
 
 Vertex service-account JSON is decoded in memory. `GOOGLE_VERTEX_LOCATION` defaults to `global`. `TARGETS_JSON` can replace the catalog with explicit models, search settings, token limits, timeouts, and pricing. Call `list_targets` to inspect credential availability and the latest observed provider/search behavior; a configured target does not prove a search occurred.
 
+`pnpm dev` runs the Node server from TypeScript. `pnpm studio` opens native Mastra Studio for local workflow inspection. Stop the regular server first when using the same local database. Studio exposes development workflow routes and should stay on a trusted local machine; deploy the authenticated server for remote clients.
+
 ## Connect an agent
 
 For Streamable HTTP, use the MCP URL and bearer token. A client supporting this configuration format can use:

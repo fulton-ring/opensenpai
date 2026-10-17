@@ -123,5 +123,18 @@ export function applicationEnvironment(bindings: Record<string, unknown>): Recor
       (entry): entry is [string, string] => typeof entry[1] === "string",
     ),
   );
-  return { ...values, NODE_ENV: "production", OBSERVATION_DISPATCH_MODE: "external" };
+  return {
+    ...values,
+    NODE_ENV: "production",
+    HOST: "0.0.0.0",
+    MCP_ALLOWED_HOSTS: [
+      ...new Set([
+        "localhost",
+        "127.0.0.1",
+        "container",
+        ...(values.MCP_ALLOWED_HOSTS?.split(",") ?? []),
+      ]),
+    ].join(","),
+    OBSERVATION_DISPATCH_MODE: "external",
+  };
 }
