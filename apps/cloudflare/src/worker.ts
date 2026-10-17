@@ -1,17 +1,23 @@
 import { Container, getContainer } from "@cloudflare/containers";
+import { createDurableResearchStore } from "@opensenpai/core/storage";
+
+export { ContainerProxy } from "@cloudflare/containers";
+
 import {
   applicationEnvironment,
   consumeObservations,
   dispatchOutbox,
   handleRequest,
 } from "./handlers.js";
+import { createResearchRpc, handlePrivateStorage } from "./private-storage.js";
 
 interface Environment extends Record<string, unknown> {
   APPLICATION: DurableObjectNamespace<OpenSenpaiContainer>;
   OBSERVATIONS: Queue<{ observationId: string }>;
   MCP_AUTH_TOKEN: string;
   INTERNAL_EXECUTION_TOKEN: string;
-  DATABASE_URL: string;
+  WORKSPACE_ID: string;
+  DB: D1Database;
 }
 
 export class OpenSenpaiContainer extends Container<Environment> {
@@ -29,7 +35,17 @@ export class OpenSenpaiContainer extends Container<Environment> {
     "4111",
   ];
   envVars = applicationEnvironment(this.env);
+  private readonly research = createResearchRpc(
+    createDurableResearchStore(this.ctx.storage, this.env.WORKSPACE_ID),
+  );
+
+  // RPC is reachable only through the namespace binding; public fetch does not route it.
+  researchRpc(body: unknown) {
+    return this.research(body);
+  }
 }
+
+OpenSenpaiContainer.outboundByHost = { "cloudflare-storage": handlePrivateStorage };
 
 function environment(env: Environment) {
   return { ...env, APPLICATION: getContainer(env.APPLICATION, "opensenpai") };
