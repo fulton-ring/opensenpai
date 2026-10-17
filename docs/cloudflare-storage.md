@@ -12,10 +12,14 @@ The Node container accesses both stores through private outbound host handlers. 
 - [x] Add Node clients for the private research and D1 endpoints; select them with `STORAGE_BACKEND=cloudflare` and instantiate Mastra's native `D1Store` with its binding-compatible client.
 - [x] Bind a D1 database, wire the private outbound handlers, remove remote libSQL requirements from the Cloudflare adapter, and retain authenticated MCP ingress and bounded queue execution.
 - [x] Test rollback, concurrent claims, idempotency, cancellation, reservations, immutable evidence, private routing, and persistence across container restart.
-- [ ] Finish repository checks and the complete Cloudflare image build.
+- [x] Finish repository checks and the complete Cloudflare image build.
 - [ ] Publish and verify the hosted service after explicit approval to upload its secrets.
 
 The authenticated CLI provisioned `opensenpai-mastra` and the observation/dead-letter queues. Automatic approval review rejected the secret upload because exporting the existing credentials to Cloudflare requires explicit permission. The rejected upload contained the two app authentication tokens and OpenRouter, Exa, and Perplexity keys; no values were printed and no credentials were uploaded.
+
+`pnpm check` passes 231 tests, Biome and source/test folder limits, strict typechecking, and all Turborepo builds. The Miniflare test uses real Durable Object SQLite and D1: a trigger aborts the observation update after a reservation insert, proving the earlier write rolls back; concurrent claim calls produce one reservation. It then restarts the runtime and Node application to verify workflow snapshots, audit records, reservations, settled costs, and immutable result evidence survive. Provider responses in this deterministic persistence test are fixtures; it makes no paid calls. Earlier real-agent acceptance exercised the local HTTP and stdio transports with live providers.
+
+The complete Wrangler dry run also passes, including the Linux AMD64 production image build and the Worker bundle with native D1 and Durable Object bindings. TypeScript compilation runs on the builder's native architecture; production dependencies still use the target architecture.
 
 ## Guardrails
 

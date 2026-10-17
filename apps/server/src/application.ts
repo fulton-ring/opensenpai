@@ -93,8 +93,7 @@ async function createStorage(
     return {
       store: createCloudflareResearchStorage(config.workspaceId, options.bridgeFetch),
       nativeStorage:
-        options.storage ??
-        (await createCloudflareD1Storage(config.workspaceId, options.bridgeFetch)),
+        options.storage ?? createCloudflareD1Storage(config.workspaceId, options.bridgeFetch),
     };
   await ensureParent(config.databaseUrl);
   await ensureParent(config.mastraStorageUrl);

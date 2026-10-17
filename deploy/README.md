@@ -2,6 +2,8 @@
 
 Node 24 LTS and pnpm 10.30.0 are the supported build toolchain. Turborepo builds `apps/server` and its `packages/core` dependency for the Docker image; `apps/cloudflare` contains the ingress and queue adapter. One image contains the CLI, native Mastra MCP server, storage, and workflow runtime. Secrets are supplied at runtime; the Dockerfile copies only manifests, source, and compiled output.
 
+The TypeScript build runs on the builder's native architecture. Production dependencies are installed for the image's target architecture, so Cloudflare's Linux AMD64 runtime receives matching native libSQL modules without emulating the TypeScript compiler on Apple Silicon.
+
 ## Standalone Docker
 
 Create your ignored `.env` from the root example and set `MCP_AUTH_TOKEN`, target configuration, and provider credentials. Listing targets and estimating runs do not make paid calls.
