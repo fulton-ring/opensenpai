@@ -1,0 +1,118 @@
+import { randomUUID } from "node:crypto";
+import { Mastra } from "@mastra/core/mastra";
+import { createStep, createWorkflow } from "@mastra/core/workflows";
+import { createWorkflow as createEventedWorkflow } from "@mastra/core/workflows/evented";
+import { LibSQLStore } from "@mastra/libsql";
+import { ValkeyStreamsPubSub } from "@mastra/valkey-streams";
+import { z } from "zod";
+import { type Observation, ResearchError } from "../contracts.js";
+import { ObservationExecutor } from "./execution.js";
+import type { RuntimeOptions } from "./types.js";
+
+export { retrievalId } from "./execution.js";
+export type { RuntimeOptions, RuntimeStore } from "./types.js";
+
+function workflows(executor: ObservationExecutor) {
+  const schema = z.object({ id: z.string() });
+  // One paid boundary per native step: redelivery must first win a durable claim.
+  const step = createStep({
+    id: "execute-observation",
+    inputSchema: schema,
+    outputSchema: schema,
+    retries: 0,
+    execute: ({ inputData, abortSignal }) => executor.execute(inputData.id, abortSignal),
+  });
+  const config = {
+    inputSchema: schema,
+    outputSchema: schema,
+    retryConfig: { attempts: 0, delay: 0 },
+    options: { autoRestartActiveRuns: false, shouldPersistSnapshot: () => true },
+  };
+  return {
+    observation: createEventedWorkflow({ id: "observation", ...config })
+      .then(step)
+      .commit(),
+    observationDirect: createWorkflow({ id: "observation-direct", ...config })
+      .then(step)
+      .commit(),
+  };
+}
+
+class Runtime {
+  readonly mastra: Mastra;
+  private readonly executor: ObservationExecutor;
+  private readonly ownedPubsub: ValkeyStreamsPubSub | undefined;
+  private started = false;
+  private stopped = false;
+  constructor(private readonly options: RuntimeOptions) {
+    const owner = randomUUID();
+    this.executor = new ObservationExecutor(options, owner);
+    this.ownedPubsub =
+      !options.pubsub && options.valkeyUrl
+        ? new ValkeyStreamsPubSub({ url: options.valkeyUrl, reclaimIdleMs: 180_000 })
+        : undefined;
+    const storage =
+      options.storage ??
+      new LibSQLStore({
+        id: `runtime-${owner}`,
+        url: options.env.DATABASE_URL ?? "file:./data/opensenpai.db",
+        ...(options.env.DATABASE_AUTH_TOKEN ? { authToken: options.env.DATABASE_AUTH_TOKEN } : {}),
+      });
+    this.mastra = new Mastra({
+      logger: false,
+      storage,
+      pubsub: options.pubsub ?? this.ownedPubsub,
+      workflows: workflows(this.executor),
+      workers: options.role === "api" || options.directOnly ? false : undefined,
+      recovery: { workflows: "off", durableAgents: "off" },
+    });
+  }
+  async start() {
+    if (this.started) return;
+    this.started = true;
+    await this.mastra.getStorage()?.init();
+    if (this.options.role !== "api") await this.options.store.recoverExpired();
+    if (!this.options.directOnly && this.options.role !== "api")
+      await this.mastra.startWorkers("orchestration");
+    if (!this.options.directOnly && this.options.dispatchMode !== "external") {
+      let pending = await this.options.store.listUnqueued(100);
+      while (pending.length) {
+        await this.dispatch(pending);
+        pending = await this.options.store.listUnqueued(100);
+      }
+    }
+  }
+  async dispatch(observations: Observation[]) {
+    if (this.stopped) throw new ResearchError("runtime_stopped", "Runtime has stopped");
+    if (this.options.dispatchMode === "external") return;
+    for (const observation of observations) {
+      if (observation.status !== "pending") continue;
+      const run = await this.mastra
+        .getWorkflow("observation")
+        .createRun({ runId: `observation-${observation.id}-${randomUUID()}` });
+      await run.startAsync({ inputData: { id: observation.id } });
+      await this.options.store.markQueued(observation.id);
+    }
+  }
+  async executeObservation(id: string) {
+    if (this.options.role === "api" && this.options.dispatchMode !== "external") return;
+    await this.mastra.getStorage()?.init();
+    const run = await this.mastra.getWorkflow("observationDirect").createRun();
+    const outcome = await run.start({ inputData: { id } });
+    if (outcome.status === "failed") throw outcome.error;
+  }
+  async cancel(runId: string) {
+    await this.options.store.cancelRun(runId);
+    this.executor.cancel(runId);
+  }
+  async stop() {
+    if (this.stopped) return;
+    this.stopped = true;
+    this.executor.stop();
+    await this.mastra.shutdown({ drainTimeout: 1_000 });
+    await this.ownedPubsub?.close();
+  }
+}
+export function createRuntime(options: RuntimeOptions) {
+  return new Runtime(options);
+}
