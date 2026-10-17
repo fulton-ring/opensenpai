@@ -675,3 +675,6 @@ export class ResearchStore {
     }));
   }
 }
+
+export type ResearchStorage = Omit<ResearchStore, "client">;
+export * from "./protocol.js";
