@@ -10,7 +10,7 @@ import type {
   RetrievalProvider,
 } from "./types.js";
 
-export { EXA_ESTIMATED_COST_PER_QUERY } from "../targets.js";
+export const EXA_ESTIMATED_COST_PER_QUERY = 0.02;
 export { createOpenRouterProvider } from "./openrouter.js";
 export { ProviderResponseError } from "./outcomes.js";
 export { exaProvider } from "./retrieval.js";

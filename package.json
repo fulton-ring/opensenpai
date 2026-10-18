@@ -20,6 +20,9 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "test:agent": "tsx --env-file-if-exists=.env scripts/e2e-real-agent.ts"
   },
+  "dependencies": {
+    "@opensenpai/core": "workspace:*"
+  },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@cloudflare/workers-types": "5.20261016.1",

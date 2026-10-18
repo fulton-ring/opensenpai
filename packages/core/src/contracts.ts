@@ -60,10 +60,24 @@ export const promptSchema = z
   })
   .strict();
 
+export const inlineTargetSchema = targetSchema
+  .omit({
+    transport: true,
+    pricing: true,
+    provider_options: true,
+    location: true,
+  })
+  .extend({
+    provider: adapterId,
+    serving_provider: z.string().min(1).max(200).optional(),
+  })
+  .strict();
+export const targetSelectionSchema = z.union([z.string().min(1).max(80), inlineTargetSchema]);
+
 export const runInputSchema = z
   .object({
     prompts: z.array(promptSchema).min(1).max(25),
-    targets: z.array(z.string().min(1).max(80)).min(1).max(10),
+    targets: z.array(targetSelectionSchema).min(1).max(10),
     repetitions: z.number().int().min(1).max(5).default(1),
     locale: z.string().min(2).max(40).default("en-US"),
     project: z.string().max(120).optional(),
@@ -75,7 +89,10 @@ export const runInputSchema = z
     if (new Set(value.prompts.map((p) => p.id)).size !== value.prompts.length) {
       context.addIssue({ code: "custom", message: "Prompt IDs must be unique", path: ["prompts"] });
     }
-    if (new Set(value.targets).size !== value.targets.length) {
+    if (
+      new Set(value.targets.map((target) => (typeof target === "string" ? target : target.id)))
+        .size !== value.targets.length
+    ) {
       context.addIssue({ code: "custom", message: "Target IDs must be unique", path: ["targets"] });
     }
     if (value.prompts.length * value.targets.length * value.repetitions > 100) {
@@ -84,6 +101,7 @@ export const runInputSchema = z
   });
 
 export type Target = z.infer<typeof targetSchema>;
+export type InlineTarget = z.infer<typeof inlineTargetSchema>;
 export type Prompt = z.infer<typeof promptSchema>;
 export type RunInput = z.infer<typeof runInputSchema>;
 export type Transport = Target["transport"];
