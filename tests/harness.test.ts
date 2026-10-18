@@ -162,7 +162,14 @@ it("refuses accidental paid runs and isolates agent auth from service credential
     "../scripts/e2e-real-agent.js"
   );
   expect(() => harnessOptions([], {})).toThrow(/OPENSENPAI_LIVE_TESTS/);
-  expect(() => harnessOptions([], { OPENSENPAI_LIVE_TESTS: "1" })).toThrow(/target/i);
+  expect(harnessOptions([], { OPENSENPAI_LIVE_TESTS: "1" }).targets).toMatchObject([
+    {
+      id: "experiment-1",
+      provider: "openrouter",
+      model: "openai/gpt-6-luna",
+      search: { mode: "controlled", engine: "exa" },
+    },
+  ]);
   const env = {
     OPENSENPAI_LIVE_TESTS: "1",
     E2E_TARGETS: "router-exa",
@@ -532,4 +539,180 @@ it.each([
   expect(() => reserveSpend({ spentUsd: 0, entries: [] }, "invalid", agent, app)).toThrow(
     /invalid/i,
   );
+});
+
+it("selects inline research models and independently chosen search without preset aliases", async () => {
+  const { harnessOptions } = await import("../scripts/e2e-real-agent.js");
+  const env = { OPENSENPAI_LIVE_TESTS: "1" };
+  const options = harnessOptions(
+    [
+      "--research-model",
+      "z-ai/glm-5.3-flash",
+      "--research-model",
+      "openai/gpt-6-luna",
+      "--search-engine",
+      "perplexity",
+      "--research-provider",
+      "openrouter",
+      "--model",
+      "agent-only-model",
+    ],
+    env,
+  );
+  expect(options.model).toBe("agent-only-model");
+  expect(options.targets).toMatchObject([
+    {
+      id: "experiment-1",
+      provider: "openrouter",
+      model: "z-ai/glm-5.3-flash",
+      search: { mode: "server", engine: "perplexity", max_uses: 1 },
+    },
+    {
+      id: "experiment-2",
+      provider: "openrouter",
+      model: "openai/gpt-6-luna",
+      search: { mode: "server", engine: "perplexity", max_uses: 1 },
+    },
+  ]);
+  expect(
+    harnessOptions([], {
+      ...env,
+      E2E_RESEARCH_MODELS: "z-ai/glm-5.3-flash",
+      E2E_SEARCH_ENGINE: "off",
+      E2E_RESEARCH_PROVIDER: "customAdapter",
+    }).targets,
+  ).toMatchObject([
+    { provider: "customAdapter", model: "z-ai/glm-5.3-flash", search: { mode: "off" } },
+  ]);
+  expect(harnessOptions(["--search-engine", "native"], env).targets).toMatchObject([
+    { search: { mode: "native", max_uses: 1 } },
+  ]);
+  expect(harnessOptions(["--target", "operator-preset"], env).targets).toEqual(["operator-preset"]);
+});
+it.each([
+  ["--research-model", ""],
+  ["--research-model", "one", "--research-model", "two", "--research-model", "three"],
+  ["--research-provider", "bad/provider"],
+  ["--search-engine", "google"],
+  ["--target", "preset", "--research-model", "inline"],
+])("rejects invalid or ambiguous experiment selection %j", async (...args) => {
+  const { harnessOptions } = await import("../scripts/e2e-real-agent.js");
+  expect(() => harnessOptions(args, { OPENSENPAI_LIVE_TESTS: "1" })).toThrow();
+});
+
+it("verifies inline selections carried through an external agent prompt and native run evidence", async () => {
+  const { chmod, writeFile, readdir } = await import("node:fs/promises");
+  const { createServer } = await import("node:http");
+  const { main } = await import("../scripts/e2e-real-agent.js");
+  const dir = await mkdtemp(join(tmpdir(), "harness-inline-"));
+  const artifactDir = join(dir, "artifacts");
+  const selections = ["z-ai/glm-5.3-flash", "openai/gpt-6-luna"].map((model, index) => ({
+    id: `experiment-${index + 1}`,
+    provider: "openrouter",
+    model,
+    search: { mode: "server", engine: "perplexity", max_uses: 1 } as {
+      mode: string;
+      engine?: string;
+      max_uses: number;
+    },
+    max_output_tokens: 512,
+    timeout_ms: 120000,
+  }));
+  let mismatch = false;
+  let nativeObserved = "unknown";
+  const server = createServer((request, response) => {
+    void (async () => {
+      const ledger = JSON.parse(await readFile(join(artifactDir, "cumulative-spend.json"), "utf8"));
+      const suite = ledger.entries.at(-1).id;
+      const persisted = selections.map((target) =>
+        Object.fromEntries(Object.entries(target).reverse()),
+      );
+      if (mismatch) persisted[0] = { ...persisted[0], model: "different-model" };
+      const payload = request.url?.startsWith("/internal/audit")
+        ? {
+            toolCalls: tools.map((tool) => ({
+              tool,
+              run_id: "inline-run",
+              created_at: new Date().toISOString(),
+            })),
+          }
+        : request.url?.includes("/results")
+          ? {
+              observations: selections.map((target) => ({
+                id: target.id,
+                status: "succeeded",
+                target: { id: target.id, search: target.search },
+                result: {
+                  answer: "Fixture evidence",
+                  search_activity: { requested: target.search.mode, observed: nativeObserved },
+                },
+              })),
+              next_cursor: null,
+            }
+          : {
+              id: "inline-run",
+              status: "succeeded",
+              estimated_cost_usd: 0.01,
+              reported_cost_usd: 0.005,
+              input: { project: suite, prompts: [{}], targets: persisted },
+            };
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify(payload));
+    })().catch(() => {
+      response.statusCode = 500;
+      response.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing listener");
+    const cli = join(dir, "inline-agent");
+    const source = () =>
+      `#!${process.execPath}\nconst prompt=process.argv[process.argv.indexOf("-p")+1];const match=prompt.match(/using (\\{.*\\})\\. If estimate/);if(!match||!prompt.includes("Call list_targets with {}")||prompt.includes("and ensure"))process.exit(7);const input=JSON.parse(match[1]);if(JSON.stringify(input.targets)!==JSON.stringify(${JSON.stringify(selections)}))process.exit(8);const tools=${JSON.stringify(tools)};const events=tools.map(tool=>({type:"assistant",message:{content:[{type:"tool_use",id:tool,name:"mcp__aeo__"+tool,input:tool==="start_run"||tool==="estimate_run"?input:{}}]}}));events.push({type:"user",message:{content:[{type:"tool_result",tool_use_id:"start_run",content:[{type:"text",text:JSON.stringify({run:{id:"inline-run"}})}]}]}},{type:"result",total_cost_usd:0.04,is_error:false});process.stdout.write(events.map(event=>JSON.stringify(event)).join("\\n"));\n`;
+    await writeFile(cli, source());
+    await chmod(cli, 0o700);
+    const args = [
+      "--url",
+      `http://127.0.0.1:${address.port}`,
+      "--agent-bin",
+      cli,
+      "--output-dir",
+      artifactDir,
+      "--research-model",
+      "z-ai/glm-5.3-flash",
+      "--research-model",
+      "openai/gpt-6-luna",
+      "--search-engine",
+      "perplexity",
+    ];
+    const env = {
+      OPENSENPAI_LIVE_TESTS: "1",
+      ANTHROPIC_API_KEY: "fixture-key",
+      MCP_AUTH_TOKEN: "fixture-token",
+      E2E_AGENT_BUDGET_USD: "0.4",
+      E2E_APP_BUDGET_USD: "0.2",
+    };
+    await main(args, env);
+    const reportName = (await readdir(artifactDir)).find((name) => name.endsWith(".report.json"));
+    const report = JSON.parse(await readFile(join(artifactDir, reportName ?? "missing"), "utf8"));
+    expect(report.targets).toEqual(selections);
+    expect(
+      report.evidence.calls.find((call: { tool: string }) => call.tool === "start_run").input
+        .targets,
+    ).toEqual(selections);
+    mismatch = true;
+    await expect(main(args, env)).rejects.toThrow(/run does not match/i);
+    mismatch = false;
+    for (const target of selections) target.search = { mode: "native", max_uses: 1 };
+    await writeFile(cli, source());
+    const nativeArgs = [...args];
+    nativeArgs[nativeArgs.indexOf("--search-engine") + 1] = "native";
+    await expect(main(nativeArgs, env)).rejects.toThrow(/native.*evidence/i);
+    nativeObserved = "executed";
+    await main(nativeArgs, env);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await rm(dir, { recursive: true, force: true });
+  }
 });

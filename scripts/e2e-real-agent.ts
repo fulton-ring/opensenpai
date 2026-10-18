@@ -2,7 +2,7 @@ import { access, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { parseArgs } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { createClient } from "@libsql/client";
 import {
   type AuditCall,
@@ -18,10 +18,24 @@ import {
   spendAllowances,
 } from "./harness.js";
 
+type ResearchTarget =
+  | string
+  | {
+      id: string;
+      provider: string;
+      model: string;
+      search:
+        | { mode: "off" }
+        | { mode: "native"; max_uses: 1 }
+        | { mode: "server"; engine: "perplexity"; max_uses: 1 }
+        | { mode: "controlled"; engine: "exa"; max_results: 3; max_characters: 12000 };
+      max_output_tokens: 512;
+      timeout_ms: 120000;
+    };
 type Options = {
   url: string;
   transport: "http" | "stdio";
-  targets: string[];
+  targets: ResearchTarget[];
   outputDir: string;
   full: boolean;
   agentProvider: "anthropic" | "openrouter";
@@ -38,7 +52,7 @@ type Run = {
   status: string;
   estimated_cost_usd: number | null;
   reported_cost_usd: number;
-  input: { project?: string; prompts: unknown[]; targets: string[] };
+  input: { project?: string; prompts: unknown[]; targets: ResearchTarget[] };
 };
 type Results = { observations: unknown[]; next_cursor: number | null };
 type Store = {
@@ -82,39 +96,84 @@ function agentAuth(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY };
 }
 
-function checkTargets(targets: string[]): void {
-  if (
-    !targets.length ||
-    targets.length > 2 ||
-    new Set(targets).size !== targets.length ||
-    targets.some((target) => !/^[\w-]{1,80}$/.test(target))
-  ) {
-    throw new Error(
-      "Choose one or two explicit targets with --target or E2E_TARGETS (router-exa/openai-exa)",
-    );
+const CLI_OPTIONS = {
+  url: { type: "string" },
+  transport: { type: "string" },
+  target: { type: "string", multiple: true },
+  "output-dir": { type: "string" },
+  full: { type: "boolean" },
+  model: { type: "string" },
+  "server-entry": { type: "string" },
+  "store-module": { type: "string" },
+  "agent-bin": { type: "string" },
+  workspace: { type: "string" },
+  "research-model": { type: "string", multiple: true },
+  "research-provider": { type: "string" },
+  "search-engine": { type: "string" },
+} as const;
+
+function researchSearch(engine: string): Exclude<ResearchTarget, string>["search"] {
+  switch (engine) {
+    case "exa":
+      return { mode: "controlled", engine: "exa", max_results: 3, max_characters: 12000 };
+    case "perplexity":
+      return { mode: "server", engine: "perplexity", max_uses: 1 };
+    case "native":
+      return { mode: "native", max_uses: 1 };
+    case "off":
+      return { mode: "off" };
+    default:
+      throw new Error("Search engine must be exa, perplexity, native, or off");
   }
 }
 
+function researchTargets(
+  values: ReturnType<typeof parseHarnessArgs>,
+  env: NodeJS.ProcessEnv,
+): ResearchTarget[] {
+  const presets = values.target ?? env.E2E_TARGETS?.split(",").filter(Boolean) ?? [];
+  const models = values["research-model"] ?? env.E2E_RESEARCH_MODELS?.split(",");
+  if (presets.length && models)
+    throw new Error("Choose preset targets or inline research models, not both");
+  const provider = values["research-provider"] ?? env.E2E_RESEARCH_PROVIDER ?? "openrouter";
+  if (!/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(provider))
+    throw new Error("Invalid research provider ID");
+  const search = researchSearch(values["search-engine"] ?? env.E2E_SEARCH_ENGINE ?? "exa");
+  const selections = presets.length
+    ? presets
+    : (models ?? ["openai/gpt-6-luna"]).map((model, index) => {
+        if (!model.trim() || model.length > 200)
+          throw new Error("Research models must contain 1 to 200 characters");
+        return {
+          id: `experiment-${index + 1}`,
+          provider,
+          model,
+          search,
+          max_output_tokens: 512,
+          timeout_ms: 120000,
+        } as const;
+      });
+  const ids = selections.map((target) => (typeof target === "string" ? target : target.id));
+  if (
+    !ids.length ||
+    ids.length > 2 ||
+    new Set(ids).size !== ids.length ||
+    ids.some((id) => !/^\w[\w-]{0,79}$/.test(id))
+  )
+    throw new Error("Choose one or two distinct valid research targets");
+  return selections;
+}
+
+function parseHarnessArgs(args: string[]) {
+  return parseArgs({ args, options: CLI_OPTIONS }).values;
+}
+
+/** Validate paid-test opt-in, explicit or inline research selections, and bounded spend allowances. */
 export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options {
   if (env.OPENSENPAI_LIVE_TESTS !== "1")
     throw new Error("Set OPENSENPAI_LIVE_TESTS=1 to authorize paid calls");
-  const { values } = parseArgs({
-    args,
-    options: {
-      url: { type: "string" },
-      transport: { type: "string" },
-      target: { type: "string", multiple: true },
-      "output-dir": { type: "string" },
-      full: { type: "boolean" },
-      model: { type: "string" },
-      "server-entry": { type: "string" },
-      "store-module": { type: "string" },
-      "agent-bin": { type: "string" },
-      workspace: { type: "string" },
-    },
-  });
-  const targets = values.target ?? env.E2E_TARGETS?.split(",").filter(Boolean) ?? [];
-  checkTargets(targets);
+  const values = parseHarnessArgs(args);
+  const targets = researchTargets(values, env);
   const transport = values.transport ?? env.E2E_TRANSPORT ?? "http";
   if (transport !== "http" && transport !== "stdio")
     throw new Error("Transport must be http or stdio");
@@ -152,6 +211,7 @@ export function harnessOptions(args: string[], env: NodeJS.ProcessEnv): Options 
   };
 }
 
+/** Construct isolated agent authentication without forwarding application credentials or user settings. */
 export function agentEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.ProcessEnv {
   const allowed = ["PATH", "LANG", "LC_ALL"];
   return {
@@ -163,6 +223,7 @@ export function agentEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.Pr
   };
 }
 
+/** Build the selected HTTP or stdio MCP connection using only its required server credentials. */
 export function makeMcpConfig(options: Options, env: NodeJS.ProcessEnv, database: string): unknown {
   if (options.transport === "http") {
     if (!env.MCP_AUTH_TOKEN) throw new Error("MCP_AUTH_TOKEN is required for HTTP acceptance");
@@ -210,6 +271,7 @@ export function makeMcpConfig(options: Options, env: NodeJS.ProcessEnv, database
   };
 }
 
+/** Public-evidence research questions used for the one-prompt smoke test or five-prompt acceptance run. */
 export const BUSINESS_PROMPTS = [
   {
     id: "ai-readiness",
@@ -236,7 +298,7 @@ export const BUSINESS_PROMPTS = [
 function agentPrompt(options: Options, suite: string): string {
   const prompts = options.full ? BUSINESS_PROMPTS : BUSINESS_PROMPTS.slice(0, 1);
   const appBudget = Math.min(0.5, options.appAllowance);
-  return `You are operating the aeo MCP research service for an acceptance test. Use only its seven provided tools; do not perform research yourself. List targets and ensure ${JSON.stringify(options.targets)} exist. Estimate then start exactly one primary run using ${JSON.stringify({ prompts, targets: options.targets, repetitions: 1, project: suite, idempotency_key: suite, max_estimated_cost_usd: appBudget })}. If estimate is unknown or exceeds $${appBudget}, stop without starting. Poll get_run with wait_ms:10000 until terminal (at most 16 polls); then get_results with include_raw:false and list_runs. Retrieve every primary observation, summarize retrieved answers and source evidence without inventing facts. Exercise cancel_run on the completed primary run (no new run), then get_run to confirm results remain accessible. Make exactly one start_run call and never retry a paid run. Total provider observations must be <=10. If anything errors, report failure; do not substitute your own answer. End with run ID, result count, statuses, citations, and uncertainties.`;
+  return `You are operating the aeo MCP research service for an acceptance test. Use only its seven provided tools; do not perform research yourself. Call list_targets with {} to inspect the available capabilities. Preserve the requested provider, model, and search settings exactly; unsupported capabilities must fail without fallback. Estimate then start exactly one primary run using ${JSON.stringify({ prompts, targets: options.targets, repetitions: 1, project: suite, idempotency_key: suite, max_estimated_cost_usd: appBudget })}. If estimate is unknown or exceeds $${appBudget}, stop without starting. Poll get_run with wait_ms:10000 until terminal (at most 16 polls); then get_results with include_raw:false and list_runs. Retrieve every primary observation, summarize retrieved answers and source evidence without inventing facts. Exercise cancel_run on the completed primary run (no new run), then get_run to confirm results remain accessible. Make exactly one start_run call and never retry a paid run. Total provider observations must be <=10. If anything errors, report failure; do not substitute your own answer. End with run ID, result count, statuses, citations, and uncertainties.`;
 }
 
 async function findAgent(binary: string, env: NodeJS.ProcessEnv): Promise<string> {
@@ -305,6 +367,24 @@ async function reader(options: Options, env: NodeJS.ProcessEnv, database: string
   };
 }
 
+function assertNativeEvidence(targets: ResearchTarget[], observations: unknown[]): void {
+  const nativeIds = targets.flatMap((target) =>
+    typeof target !== "string" && target.search.mode === "native" ? [target.id] : [],
+  );
+  const rows = observations as {
+    target?: { id?: string };
+    result?: { search_activity?: { observed?: string } };
+  }[];
+  for (const id of nativeIds) {
+    const matches = rows.filter((row) => row.target?.id === id);
+    if (
+      !matches.length ||
+      matches.some((row) => row.result?.search_activity?.observed !== "executed")
+    )
+      throw new Error("Native search requires observed execution evidence for every observation");
+  }
+}
+
 async function verify(
   options: Options,
   env: NodeJS.ProcessEnv,
@@ -325,7 +405,7 @@ async function verify(
         (run) =>
           run.input.project !== suite ||
           run.input.prompts.length !== (options.full ? 5 : 1) ||
-          JSON.stringify(run.input.targets) !== JSON.stringify(options.targets),
+          !isDeepStrictEqual(run.input.targets, options.targets),
       )
     )
       throw new Error("Server run does not match this acceptance suite");
@@ -338,6 +418,7 @@ async function verify(
         (!call.run_id || evidence.runIds.includes(call.run_id)),
     );
     assertAcceptance(evidence, audit, observations);
+    assertNativeEvidence(options.targets, observations);
     if (observations.length !== (options.full ? 5 : 1) * options.targets.length)
       throw new Error("Incomplete server results");
     return { runs, observations, audit };
@@ -423,6 +504,7 @@ function applicationCost(runs: Run[]): number | null {
     : null;
 }
 
+/** Run one bounded external-agent acceptance suite and persist redacted evidence with conservative spend accounting. */
 export async function main(args = process.argv.slice(2), env = process.env): Promise<void> {
   const options = harnessOptions(args, env);
   agentAuth(env);

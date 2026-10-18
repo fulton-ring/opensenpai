@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 
+/** Native MCP tools required in both the agent transcript and the server audit for acceptance. */
 export const REQUIRED_TOOLS = [
   "list_targets",
   "estimate_run",
@@ -10,14 +11,17 @@ export const REQUIRED_TOOLS = [
   "list_runs",
   "cancel_run",
 ] as const;
+/** Server-side audit record correlating an MCP tool invocation with its research run. */
 export type AuditCall = { tool: string; run_id?: string | null; created_at?: string };
 type NativeCall = { tool: string; id: string; input: Record<string, unknown> };
+/** Parsed native tool events, returned run IDs, and the external agent's reported outcome and cost. */
 export type Evidence = {
   calls: NativeCall[];
   runIds: string[];
   agentCostUsd: number | null;
   agentSucceeded: boolean;
 };
+/** One suite's reserved agent/application allowances and its eventual conservative charge. */
 export type SpendEntry = {
   id: string;
   agentAllowance: number;
@@ -25,6 +29,7 @@ export type SpendEntry = {
   chargedUsd: number;
   settled: boolean;
 };
+/** Cumulative accounted spend and suite reservations used to enforce the dispatch stop. */
 export type SpendLedger = { spentUsd: number; entries: SpendEntry[] };
 
 function object(value: unknown): Record<string, unknown> {
@@ -83,6 +88,7 @@ function parseEvent(event: Record<string, unknown>, evidence: Evidence): void {
   }
 }
 
+/** Parse native JSONL agent output, rejecting malformed events and unexpected tools. */
 export function parseTranscript(transcript: string): Evidence {
   const evidence: Evidence = { calls: [], runIds: [], agentCostUsd: null, agentSucceeded: false };
   for (const line of transcript.split("\n").filter((line) => line.trim())) {
@@ -98,6 +104,7 @@ export function parseTranscript(transcript: string): Evidence {
   return evidence;
 }
 
+/** Require audited native tool use, matching run IDs, and successful observations containing answers. */
 export function assertAcceptance(
   evidence: Evidence,
   audit: AuditCall[],
@@ -126,6 +133,7 @@ export function assertAcceptance(
   }
 }
 
+/** Remove nested credentials, bearer tokens, and configured secret values while preserving numeric token usage. */
 export function redact(value: unknown, secrets: string[] = []): unknown {
   if (typeof value === "string") {
     let result = value.replace(/Bearer\s+[^\s"\\]+/gi, "Bearer [REDACTED]");
@@ -139,7 +147,10 @@ export function redact(value: unknown, secrets: string[] = []): unknown {
       Object.entries(value).map(([key, item]) => [
         key,
         /(?:token|secret|password|authorization|api[_-]?key|credential)/i.test(key) &&
-        !(/^(?:input|output|reasoning|cached|total)_tokens$/.test(key) && typeof item === "number")
+        !(
+          /^(?:input|output|reasoning|cached|total|max_output)_tokens$/.test(key) &&
+          typeof item === "number"
+        )
           ? "[REDACTED]"
           : redact(item, secrets),
       ]),
@@ -147,6 +158,7 @@ export function redact(value: unknown, secrets: string[] = []): unknown {
   return value;
 }
 
+/** Redact each JSONL event structurally, including secrets absent from the configured environment. */
 export function redactTranscript(text: string, secrets: string[] = []): string {
   return text
     .split("\n")
@@ -166,6 +178,8 @@ function spendAllowance(name: string, value: string | undefined, maximum: number
     throw new Error(`${name} must be finite, positive, and at most ${maximum}`);
   return allowance;
 }
+
+/** Read positive agent/application allowances, defaulting to $2/$1 and rejecting increases above those limits. */
 export function spendAllowances(env: NodeJS.ProcessEnv): {
   agentAllowance: number;
   appAllowance: number;
@@ -176,6 +190,7 @@ export function spendAllowances(env: NodeJS.ProcessEnv): {
   };
 }
 
+/** Reserve allowances before dispatch and reject reservations that would exceed the cumulative $10 stop. */
 export function reserveSpend(
   ledger: SpendLedger,
   id: string,
@@ -205,6 +220,7 @@ export function reserveSpend(
   };
 }
 
+/** Reconcile a reservation, retaining full allowances for unknown or failed work and all reported overruns. */
 export function accountSpend(
   ledger: SpendLedger,
   id: string,
@@ -241,6 +257,7 @@ function stopGroup(pid: number | undefined, signal: NodeJS.Signals): void {
   }
 }
 
+/** Capture an isolated CLI process group, redact its artifact, and terminate descendants on timeout. */
 export async function runChild(
   command: string,
   args: string[],
