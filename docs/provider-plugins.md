@@ -50,7 +50,7 @@ The wrapper handles bounded generation, zero automatic retries, usage and source
 
 Configuration is trusted executable operator code. The Node application loads a local `.js`/`.mjs` default export containing `{ providers?, targets? }`; remote URLs and TypeScript files are rejected. `--config` overrides `OPENSENPAI_CONFIG`, otherwise the conventional filename is used. An explicitly missing or invalid module fails startup. If the implicit conventional file is absent, the bundled registry and empty presets are used.
 
-Programmatic `providers`/`targets` options take precedence over module settings. `TARGETS_JSON` overrides module presets only. Existing string target IDs remain supported when operators define named presets; agents do not need them for inline selection. Adapter IDs start with a letter and contain up to 80 letters, digits, underscores, or hyphens.
+Programmatic `providers`/`targets` options take precedence over module settings. `TARGETS_JSON` overrides module presets only. Accepted runs replay from their saved input/snapshot before provider metadata or credential checks; changing the caller input under the same idempotency key conflicts. Existing string target IDs remain supported when operators define named presets; agents do not need them for inline selection. Adapter IDs start with a letter and contain up to 80 letters, digits, underscores, or hyphens.
 
 The Docker image includes the root configuration and provider modules. Mount replacement modules for local deployment, or rebuild the image with additional SDK dependencies for Cloudflare. Split API and worker processes must use the same provider configuration and credentials. Agent-facing MCP inputs cannot load modules or change credentials.
 

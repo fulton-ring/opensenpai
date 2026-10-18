@@ -111,6 +111,8 @@ it("persists MCP results and native Mastra metadata in real Cloudflare SQL store
     expect(started).not.toHaveProperty("error");
     const [run] = await app.store.listRuns();
     if (!run) throw new Error("Missing durable run");
+    expect(await app.store.getRunByIdempotencyKey("durable-mcp")).toMatchObject({ id: run.id });
+    expect(await app.store.getRunByIdempotencyKey("missing")).toBeNull();
     const [observation] = (await app.store.getResults({ run_id: run.id })).observations;
     if (!observation) throw new Error("Missing durable observation");
     const sql = async (query: string) => {
@@ -163,7 +165,14 @@ it("persists MCP results and native Mastra metadata in real Cloudflare SQL store
     app = undefined;
     await mf.dispose();
     mf = new Miniflare(options);
-    app = await createApplication(env, { targets: [target], bridgeFetch, listen: false });
+    app = await createApplication(
+      { ...env, OPENROUTER_API_KEY: undefined },
+      { targets: [], bridgeFetch, listen: false },
+    );
+    expect(await app.store.getRunByIdempotencyKey("durable-mcp")).toMatchObject({ id: run.id });
+    expect(await app.mcp.executeTool("start_run", input)).toMatchObject({
+      output: { created: false, run: { id: run.id } },
+    });
     expect((await app.store.getRun(run.id))?.reserved_cost_usd).toBeGreaterThan(0);
     expect((await app.store.getObservation(observation.id))?.status).toBe("running");
     expect(await app.store.listToolCalls(run.id)).toEqual(
