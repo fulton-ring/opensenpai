@@ -72,67 +72,13 @@ function responseEvidence(raw: Json): Evidence {
   }
   return e;
 }
-function anthropicEvidence(raw: Json): Evidence {
-  const e = empty();
-  for (const c of records(raw.content)) {
-    if (c.type === "server_tool_use" && c.name === "web_search") e.searches = (e.searches ?? 0) + 1;
-    if (c.type === "web_search_tool_result")
-      e.sources.push(
-        ...records(c.content)
-          .map(source)
-          .filter((s) => s !== null),
-      );
-    e.citations.push(
-      ...records(c.citations)
-        .map(citation)
-        .filter((c) => c !== null),
-    );
-  }
-  return e;
-}
-function vertexEvidence(raw: Json): Evidence {
-  const e = empty();
-  for (const candidate of records(raw.candidates)) {
-    const grounding = obj(candidate.groundingMetadata);
-    const chunks = records(grounding.groundingChunks);
-    e.sources.push(...chunks.map((c) => source(c.web)).filter((s) => s !== null));
-    const queries = arr(grounding.webSearchQueries);
-    if (queries.length) {
-      e.searches = (e.searches ?? 0) + queries.length;
-      e.engine = "google";
-    }
-    for (const support of records(grounding.groundingSupports)) {
-      const segment = obj(support.segment);
-      for (const index of arr(support.groundingChunkIndices)) {
-        const web = obj(obj(chunks[Number(index)]).web);
-        if (isUrl(web.uri))
-          e.citations.push({
-            url: web.uri,
-            title: str(web.title),
-            start_index: num(segment.startIndex) ?? undefined,
-            end_index: num(segment.endIndex) ?? undefined,
-            cited_text: str(segment.text),
-            locator_units: "provider_defined",
-            metadata: support,
-          });
-      }
-    }
-  }
-  return e;
-}
 function evidence(input: ProviderInput, raw: Json): Evidence {
-  const parsers = {
-    openai: responseEvidence,
-    perplexity: responseEvidence,
-    anthropic: anthropicEvidence,
-    vertex: vertexEvidence,
-    openrouter: responseEvidence,
-  };
-  const e = parsers[input.target.transport](raw);
+  const e = responseEvidence(raw);
   for (const choice of records(raw.choices))
     e.citations.push(...annotations(obj(choice.message).annotations));
   const usage = obj(raw.usage ?? raw.usageMetadata);
   e.searches =
+    num(obj(usage.server_tool_use_details).web_search_requests) ??
     num(obj(usage.server_tool_use).web_search_requests) ??
     num(obj(usage.server_tool_usage).web_search_requests) ??
     num(usage.num_search_queries) ??
@@ -145,22 +91,10 @@ function evidence(input: ProviderInput, raw: Json): Evidence {
   e.executed = e.searches !== null && e.searches > 0;
   return e;
 }
-function warnings(input: ProviderInput, searches: number | null): string[] {
-  if (input.target.search.mode !== "native") return [];
-  const messages = [];
-  if (searches === null)
-    messages.push("Search was requested; the provider did not report execution evidence.");
-  if (input.target.transport === "openrouter")
-    messages.push(
-      "OpenRouter native search may fall back to another engine; engine is unknown unless reported.",
-    );
-  if (["openai", "vertex"].includes(input.target.transport))
-    messages.push("Native search max_uses is an estimate, not a provider-enforced hard cap.");
-  return messages;
-}
 export interface NormalizationContext {
   responses?: Json[];
   sdk_usage?: LanguageModelUsage;
+  sdk_sources?: Source[];
 }
 function sumCounts(values: (number | null)[]): number | null {
   return values.some((v) => v === null)
@@ -179,25 +113,12 @@ function combinedEvidence(input: ProviderInput, responses: Json[]): Evidence {
   };
 }
 function rawTokens(raw: Json) {
-  const u = obj(raw.usage ?? raw.usageMetadata);
-  const googleInput = num(u.promptTokenCount),
-    googleOutput = num(u.candidatesTokenCount);
+  const u = obj(raw.usage);
   return {
-    input:
-      num(u.input_tokens ?? u.prompt_tokens) ??
-      (googleInput === null ? null : googleInput + (num(u.toolUsePromptTokenCount) ?? 0)),
-    output:
-      num(u.output_tokens ?? u.completion_tokens) ??
-      (googleOutput === null ? null : googleOutput + (num(u.thoughtsTokenCount) ?? 0)),
-    reasoning: num(
-      obj(u.output_tokens_details ?? u.completion_tokens_details).reasoning_tokens ??
-        u.thoughtsTokenCount,
-    ),
-    cached: num(
-      obj(u.input_tokens_details ?? u.prompt_tokens_details).cached_tokens ??
-        u.cache_read_input_tokens ??
-        u.cachedContentTokenCount,
-    ),
+    input: num(u.input_tokens ?? u.prompt_tokens),
+    output: num(u.output_tokens ?? u.completion_tokens),
+    reasoning: num(obj(u.output_tokens_details ?? u.completion_tokens_details).reasoning_tokens),
+    cached: num(obj(u.input_tokens_details ?? u.prompt_tokens_details).cached_tokens),
     cost: num(u.cost) ?? num(obj(u.cost).total_cost) ?? num(u.total_cost),
     raw: u,
   };
@@ -211,13 +132,13 @@ function usage(
   const tokens = responses.map(rawTokens);
   const rawInput = sumCounts(tokens.map((t) => t.input)),
     rawOutput = sumCounts(tokens.map((t) => t.output));
-  const inputTokens = rawInput === null ? null : (num(sdk?.inputTokens) ?? rawInput),
-    outputTokens = rawOutput === null ? null : (num(sdk?.outputTokens) ?? rawOutput);
+  const inputTokens = num(sdk?.inputTokens) ?? rawInput,
+    outputTokens = num(sdk?.outputTokens) ?? rawOutput;
   const rawReasoning = sumCounts(tokens.map((t) => t.reasoning)),
     rawCached = sumCounts(tokens.map((t) => t.cached));
   const price = input.target.pricing;
   const unknownSearchCost =
-    input.target.search.mode === "native" &&
+    ["native", "server"].includes(input.target.search.mode) &&
     searches === null &&
     (price?.search_per_request ?? 0) > 0;
   const estimated =
@@ -228,10 +149,8 @@ function usage(
   return {
     input_tokens: inputTokens,
     output_tokens: outputTokens,
-    reasoning_tokens:
-      rawReasoning === null ? null : (num(sdk?.outputTokenDetails.reasoningTokens) ?? rawReasoning),
-    cached_tokens:
-      rawCached === null ? null : (num(sdk?.inputTokenDetails.cacheReadTokens) ?? rawCached),
+    reasoning_tokens: num(sdk?.outputTokenDetails.reasoningTokens) ?? rawReasoning,
+    cached_tokens: num(sdk?.inputTokenDetails.cacheReadTokens) ?? rawCached,
     search_requests: searches,
     reported_cost_usd: sumCounts(tokens.map((t) => t.cost)),
     estimated_cost_usd: estimated,
@@ -243,7 +162,7 @@ function usage(
 }
 function searchActivity(input: ProviderInput, e: Evidence): ProviderResult["search_activity"] {
   if (input.target.search.mode === "controlled")
-    return { requested: "controlled", observed: "executed", engine: "exa" };
+    return { requested: "controlled", observed: "executed", engine: input.target.search.engine };
   const observed = e.executed
     ? "executed"
     : e.searches === null
@@ -273,7 +192,8 @@ export function normalize(
       (input.target.transport === "openrouter" ? null : input.target.transport),
     response_id: str(raw.id) ?? str(raw.responseId) ?? null,
     finish_reason: finish,
-    sources: input.retrieval?.sources ?? e.sources,
+    sources:
+      input.retrieval?.sources ?? uniqueSources([...e.sources, ...(context.sdk_sources ?? [])]),
     citations: e.citations,
     extracted_urls: [
       ...new Set(
@@ -283,6 +203,6 @@ export function normalize(
     search_activity: searchActivity(input, e),
     usage: usage(input, responses, e.searches, context.sdk_usage),
     raw_response: responses.length === 1 ? raw : { responses },
-    warnings: warnings(input, e.searches),
+    warnings: [],
   };
 }

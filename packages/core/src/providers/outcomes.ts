@@ -46,22 +46,6 @@ function rejectStatus(raw: Json, result: ProviderResult): void {
       result,
     );
 }
-function checkPerplexityShape(input: ProviderInput, raw: Json, result: ProviderResult): void {
-  if (input.target.transport !== "perplexity") return;
-  const status = str(raw.status);
-  if (
-    !str(raw.id) ||
-    !str(raw.model) ||
-    !Array.isArray(raw.output) ||
-    !status ||
-    !["completed", "incomplete"].includes(status)
-  )
-    throw new ProviderResponseError(
-      "provider_invalid_response",
-      "Provider returned an invalid generation response",
-      result,
-    );
-}
 export function validateOutcome(
   input: ProviderInput,
   raw: Json,
@@ -73,7 +57,6 @@ export function validateOutcome(
   const actualFinish = status && status !== "completed" ? status : finish;
   const result = normalize(input, raw, answer, actualFinish, context);
   rejectStatus(raw, result);
-  checkPerplexityShape(input, raw, result);
   const refusal = hasRefusal(raw),
     safety = safetyBlocked(raw, finish);
   if (refusal) result.warnings.push("Provider refused to answer this request.");
