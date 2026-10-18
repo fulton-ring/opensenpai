@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { LibSQLStore } from "@mastra/libsql";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import {
   type ExecutionHooks,
   type ProviderResult,
@@ -13,6 +13,7 @@ import {
   targetSchema,
   type Usage,
 } from "../src/contracts.js";
+import { retrieveSearch } from "../src/providers/index.js";
 import { createRuntime, type RuntimeOptions } from "../src/runtime/index.js";
 import { ResearchStore } from "../src/storage/index.js";
 
@@ -257,4 +258,166 @@ it("reconciles a late retrieval with the same spend authorization after timeout"
     attempt: { attempt_id: id },
     usage: { reported_cost_usd: 0.031, search_requests: 2 },
   });
+});
+
+it("settles model authorization followed by cancellation as known zero before dispatch", async () => {
+  const settled: { attempt: SpendAuthorization; outcome: string; usage: Usage | null }[] = [];
+  let cancel: (id: string) => Promise<unknown> = async () => undefined;
+  const f = await setup({
+    authorize: async (attempt) => {
+      if (attempt.operation === "model") await cancel(attempt.run_id);
+    },
+    settled: async (attempt, outcome, usage) => {
+      settled.push({ attempt, outcome, usage });
+    },
+  });
+  cancel = (id) => f.store.cancelRun(id);
+  const observation = f.observations[0];
+  if (!observation) throw new Error("Expected observation");
+  await f.runtime.executeObservation(observation.id);
+  expect(f.providerCalls()).toBe(0);
+  expect((await f.store.getObservation(observation.id))?.status).toBe("cancelled");
+  expect((await f.store.getRun(observation.run_id))?.reserved_cost_usd).toBe(0);
+  expect(settled.find(({ attempt }) => attempt.operation === "model")).toMatchObject({
+    outcome: "cancelled",
+    usage: { reported_cost_usd: 0, estimated_cost_usd: 0, input_tokens: 0, search_requests: 0 },
+  });
+});
+
+it("retains unknown settlement when the dispatch marker commits but its response is lost", async () => {
+  const settled: { attempt: SpendAuthorization; outcome: string; usage: Usage | null }[] = [];
+  const f = await setup({
+    settled: async (attempt, outcome, usage) => {
+      settled.push({ attempt, outcome, usage });
+    },
+  });
+  const markDispatched = f.store.markDispatched.bind(f.store);
+  vi.spyOn(f.store, "markDispatched").mockImplementation(async (...args) => {
+    await markDispatched(...args);
+    throw new Error("Dispatch commit acknowledgement lost");
+  });
+  const observation = f.observations[0];
+  if (!observation) throw new Error("Expected observation");
+  await f.runtime.executeObservation(observation.id);
+  expect(f.providerCalls()).toBe(0);
+  expect((await f.store.getObservation(observation.id))?.status).toBe("unknown_outcome");
+  expect((await f.store.getRun(observation.run_id))?.reserved_cost_usd).toBe(0.01);
+  expect(settled.find(({ attempt }) => attempt.operation === "model")).toMatchObject({
+    outcome: "unknown_outcome",
+    usage: null,
+  });
+});
+
+it.each([false, true])(
+  "persists completed search evidence when a later query is ambiguous=%s",
+  async (unknown) => {
+    const settled: { attempt: SpendAuthorization; outcome: string; usage: Usage | null }[] = [];
+    let calls = 0;
+    const fetcher: typeof fetch = async () => {
+      calls++;
+      if (calls === 1)
+        return Response.json({
+          results: [
+            { url: "https://example.com/evidence", title: "Evidence", text: "Paid evidence" },
+          ],
+          costDollars: { total: 0.006 },
+        });
+      if (unknown) throw new Error("Second query outcome unknown");
+      return Response.json({ error: "rate limited" }, { status: 429 });
+    };
+    const f = await setup(
+      {
+        settled: async (attempt, outcome, usage) => {
+          settled.push({ attempt, outcome, usage });
+        },
+      },
+      {
+        retrieveSearch: (input) =>
+          retrieveSearch(input, { EXA_API_KEY: "test" }, { fetch: fetcher }),
+      },
+    );
+    const observation = f.observations[0];
+    if (!observation) throw new Error("Expected observation");
+    await f.runtime.executeObservation(observation.id);
+    await f.runtime.executeObservation(observation.id);
+    const saved = await f.store.getObservation(observation.id);
+    const retrieval = await f.store.getRetrieval(saved?.retrieval_id ?? "");
+    expect(calls).toBe(2);
+    expect(f.providerCalls()).toBe(0);
+    expect(retrieval).toMatchObject({
+      status: unknown ? "unknown_outcome" : "failed",
+      bundle: {
+        queries: ["first"],
+        reported_cost_usd: unknown ? null : 0.006,
+        sources: [{ url: "https://example.com/evidence" }],
+        raw_response: { completed_reported_cost_usd: 0.006 },
+      },
+    });
+    expect((await f.store.getRun(observation.run_id))?.reserved_cost_usd).toBe(unknown ? 0.04 : 0);
+    expect(settled.find(({ attempt }) => attempt.operation === "retrieval")).toMatchObject({
+      outcome: unknown ? "unknown_outcome" : "failed",
+      usage: {
+        reported_cost_usd: unknown ? null : 0.006,
+        search_requests: unknown ? null : 1,
+        raw: { completed_reported_cost_usd: 0.006 },
+      },
+    });
+  },
+);
+
+it("retains partial retrieval evidence arriving after the abort race rejects first", async () => {
+  const settled: { attempt: SpendAuthorization; outcome: string; usage: Usage | null }[] = [];
+  let calls = 0;
+  const fetcher: typeof fetch = async (_request, init) => {
+    calls++;
+    if (calls === 1)
+      return Response.json({
+        results: [{ url: "https://example.com/first" }],
+        costDollars: { total: 0.006 },
+      });
+    return new Promise((_resolve, reject) => {
+      const signal = init?.signal;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+  const f = await setup(
+    {
+      settled: async (attempt, outcome, usage) => {
+        settled.push({ attempt, outcome, usage });
+      },
+    },
+    {
+      timeoutMs: 30,
+      retrieveSearch: (input) => retrieveSearch(input, { EXA_API_KEY: "test" }, { fetch: fetcher }),
+    },
+  );
+  const observation = f.observations[0];
+  if (!observation) throw new Error("Expected observation");
+  await f.runtime.executeObservation(observation.id);
+  const saved = await f.store.getObservation(observation.id);
+  for (let i = 0; i < 100 && !(await f.store.getRetrieval(saved?.retrieval_id ?? ""))?.bundle; i++)
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  expect(calls).toBe(2);
+  expect(f.providerCalls()).toBe(0);
+  expect(await f.store.getRetrieval(saved?.retrieval_id ?? "")).toMatchObject({
+    status: "unknown_outcome",
+    bundle: {
+      queries: ["first"],
+      reported_cost_usd: null,
+      raw_response: { completed_reported_cost_usd: 0.006 },
+    },
+  });
+  expect((await f.store.getRun(observation.run_id))?.reserved_cost_usd).toBe(0.04);
+  expect(settled.filter(({ attempt }) => attempt.operation === "retrieval")).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        outcome: "unknown_outcome",
+        usage: expect.objectContaining({
+          reported_cost_usd: null,
+          search_requests: null,
+          raw: expect.objectContaining({ completed_reported_cost_usd: 0.006 }),
+        }),
+      }),
+    ]),
+  );
 });

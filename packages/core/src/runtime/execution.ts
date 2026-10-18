@@ -7,6 +7,7 @@ import {
   type RetrievalBundle,
   type SpendAuthorization,
 } from "../contracts.js";
+import { RetrievalResponseError } from "../providers/outcomes.js";
 import { retrievalEstimate } from "../targets.js";
 import { Concurrency, concurrencyLimit } from "./concurrency.js";
 import {
@@ -222,9 +223,12 @@ export class ObservationExecutor {
     await this.check(attempt);
     await bounded(authorizeSpend(this.options, authorization), controller.signal);
     await this.check(attempt);
-    if (!(await this.options.store.markDispatched(observation.id, authorization.attempt_id)))
-      throw new ResearchError("cancelled", "Dispatch was cancelled or ownership was lost");
+    // A lost commit acknowledgement is ambiguous once the durable dispatch boundary begins.
     attempt.dispatched = true;
+    if (!(await this.options.store.markDispatched(observation.id, authorization.attempt_id))) {
+      attempt.dispatched = false;
+      throw new ResearchError("cancelled", "Dispatch was cancelled or ownership was lost");
+    }
     const execute =
       this.options.executeProvider ?? (await import("../providers/index.js")).executeProvider;
     controller.signal.throwIfAborted();
@@ -255,7 +259,8 @@ export class ObservationExecutor {
   private async persistFailure(attempt: Attempt, error: unknown) {
     const known = knownRejection(error);
     attempt.notDispatched =
-      error instanceof ResearchError && error.code === "provider_not_dispatched";
+      !attempt.dispatched ||
+      (error instanceof ResearchError && error.code === "provider_not_dispatched");
     const cancelled = error instanceof ResearchError && error.code === "cancelled";
     attempt.terminal =
       attempt.dispatched && !known ? "unknown_outcome" : cancelled ? "cancelled" : "failed";
@@ -354,29 +359,52 @@ export class ObservationExecutor {
     } catch (error) {
       const notDispatched =
         !dispatched || (error instanceof ResearchError && error.code === "provider_not_dispatched");
-      const unknown = !notDispatched && !knownRejection(error);
-      await this.options.store.failRetrieval(
-        id,
-        this.owner,
-        failure(error),
-        unknown,
-        undefined,
-        notDispatched,
-      );
-      await settleSpend(
-        this.options,
-        authorization,
-        unknown ? "unknown_outcome" : "failed",
-        notDispatched ? retrievalUsage() : null,
-      );
-      if (call && signal.aborted)
+      await this.persistRetrievalFailure(authorization, error, notDispatched);
+      if (call && signal.aborted && !(error instanceof RetrievalResponseError))
         void call
-          .then((late) => this.persistBundle(observation, authorization, late))
+          .then(
+            (late) => this.persistBundle(observation, authorization, late),
+            (lateError) => {
+              if (lateError instanceof RetrievalResponseError)
+                return this.persistRetrievalFailure(authorization, lateError, false);
+              reportError(this.options, lateError);
+            },
+          )
           .catch((error) => reportError(this.options, error));
       throw error;
     }
     await this.persistBundle(observation, authorization, bundle);
     return bundle;
+  }
+
+  private async persistRetrievalFailure(
+    authorization: SpendAuthorization,
+    error: unknown,
+    notDispatched: boolean,
+  ): Promise<void> {
+    const partial = error instanceof RetrievalResponseError ? error.bundle : undefined;
+    const unknown =
+      error instanceof RetrievalResponseError
+        ? error.unknown
+        : !notDispatched && !knownRejection(error);
+    await this.options.store.failRetrieval(
+      authorization.attempt_id,
+      this.owner,
+      failure(error),
+      unknown,
+      partial,
+      notDispatched,
+    );
+    const usage = partial
+      ? {
+          ...retrievalUsage(partial),
+          search_requests: unknown ? null : partial.queries.length,
+          raw: partial.raw_response,
+        }
+      : notDispatched
+        ? retrievalUsage()
+        : null;
+    await settleSpend(this.options, authorization, unknown ? "unknown_outcome" : "failed", usage);
   }
 
   private async persistBundle(
