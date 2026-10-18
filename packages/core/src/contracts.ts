@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+const adapterId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/);
+const pluginOptions = z.record(z.string(), z.json());
+
 export const searchSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("off") }).strict(),
   z
@@ -7,10 +10,18 @@ export const searchSchema = z.discriminatedUnion("mode", [
     .strict(),
   z
     .object({
+      mode: z.literal("server"),
+      engine: adapterId,
+      max_uses: z.number().int().min(1).max(3).default(1),
+    })
+    .strict(),
+  z
+    .object({
       mode: z.literal("controlled"),
-      engine: z.literal("exa"),
+      engine: adapterId,
       max_results: z.number().int().min(1).max(10).default(3),
       max_characters: z.number().int().min(100).max(30_000).default(12_000),
+      options: pluginOptions.optional(),
     })
     .strict(),
 ]);
@@ -26,7 +37,7 @@ export const pricingSchema = z
 export const targetSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
-    transport: z.enum(["openai", "anthropic", "vertex", "perplexity", "openrouter"]),
+    transport: adapterId,
     model: z.string().min(1).max(200),
     search: searchSchema,
     max_output_tokens: z.number().int().min(32).max(4096).default(512),
@@ -37,6 +48,7 @@ export const targetSchema = z
       .optional(),
     location: z.string().max(80).optional(),
     pricing: pricingSchema.optional(),
+    provider_options: pluginOptions.optional(),
   })
   .strict();
 
