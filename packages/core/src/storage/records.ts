@@ -76,7 +76,8 @@ export function newObservations(
 ): Observation[] {
   const rows: Observation[] = [];
   for (const prompt of run.input.prompts) {
-    for (const targetId of run.input.targets) {
+    for (const selection of run.input.targets) {
+      const targetId = typeof selection === "string" ? selection : selection.id;
       const target = targets.find((item) => item.id === targetId);
       if (!target) throw new ResearchError("TARGET_NOT_FOUND", `Missing target ${targetId}`);
       for (let repetition = 0; repetition < run.input.repetitions; repetition++) {

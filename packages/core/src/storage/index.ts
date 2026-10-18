@@ -436,7 +436,9 @@ export class ResearchStore {
         return;
       const actual = partialResult?.usage.reported_cost_usd ?? null;
       const unbilled =
-        partialResult === undefined && row.dispatched_at === null && outcome !== "unknown_outcome";
+        partialResult === undefined &&
+        (row.dispatched_at === null || error.code === "provider_not_dispatched") &&
+        outcome !== "unknown_outcome";
       Object.assign(row, {
         status: outcome,
         error,
