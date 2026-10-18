@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { analyzeStyle, checkStyle } from "../scripts/check-style.js";
+import { analyzeStyle, checkStyle, fixFunctionSpacing } from "../scripts/check-style.js";
 
 const fixtures: string[] = [];
 
@@ -136,4 +136,65 @@ it("discovers only maintained source, scripts, and application configuration", (
   );
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("apps/server/src/main.ts:1:public-jsdoc:");
+});
+
+it("fixes only separator whitespace before comments and class methods, idempotently", () => {
+  const source = `/** Public runner. */
+export class Runner {
+  constructor() {} // Trailing comment.
+  /** Runs the request. */
+  run() { return "unchanged"; }
+
+
+  get ready() { return true; }
+}
+function first() { /* untouched */ }
+// Attached explanation.
+/** Second contract. */
+function second() {}`;
+  const expected = `/** Public runner. */
+export class Runner {
+  constructor() {} // Trailing comment.
+
+  /** Runs the request. */
+  run() { return "unchanged"; }
+
+  get ready() { return true; }
+}
+function first() { /* untouched */ }
+
+// Attached explanation.
+/** Second contract. */
+function second() {}`;
+  const fixed = fixFunctionSpacing("fixture.ts", source);
+  expect(fixed).toBe(expected);
+  expect(fixFunctionSpacing("fixture.ts", fixed)).toBe(fixed);
+  expect(rules(fixed)).toEqual([]);
+  expect(fixFunctionSpacing("fixture.ts", "function first() {}\r\nfunction second() {}")).toBe(
+    "function first() {}\r\n\r\nfunction second() {}",
+  );
+  expect(fixFunctionSpacing("fixture.ts", "export const undocumented = 1;")).toBe(
+    "export const undocumented = 1;",
+  );
+});
+
+it("CLI --write repairs spacing while still rejecting missing JSDoc", () => {
+  const root = mkdtempSync(join(tmpdir(), "opensenpai-style-write-"));
+  fixtures.push(root);
+  mkdirSync(join(root, "scripts"));
+  const file = join(root, "scripts", "example.ts");
+  writeFileSync(file, "export function first() {}\nfunction second() {}\n");
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      import.meta.resolve("tsx"),
+      fileURLToPath(new URL("../scripts/check-style.ts", import.meta.url)),
+      "--write",
+    ],
+    { cwd: root, encoding: "utf8" },
+  );
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("public-jsdoc");
+  expect(result.stderr).not.toContain("function-spacing");
 });

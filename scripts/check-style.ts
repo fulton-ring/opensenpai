@@ -1,4 +1,4 @@
-import { globSync, readFileSync } from "node:fs";
+import { globSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
@@ -71,26 +71,29 @@ function spacingAnchor(source: ts.SourceFile, previous: ts.Node, next: ts.Node) 
   return { previousEnd, nextStart };
 }
 
-function spacingViolations(source: ts.SourceFile, parent: ts.Node): StyleViolation[] {
-  const violations: StyleViolation[] = [];
+function spacingSeparators(source: ts.SourceFile, parent: ts.Node) {
+  const separators: { previousEnd: number; nextStart: number }[] = [];
   const siblings = siblingNodes(parent);
   for (let index = 1; index < siblings.length; index++) {
     const previous = siblings[index - 1];
     const next = siblings[index];
     if (!previous || !next || !isImplementation(previous) || !isImplementation(next)) continue;
-    const { previousEnd, nextStart } = spacingAnchor(source, previous, next);
-    const previousLine = source.getLineAndCharacterOfPosition(previousEnd).line;
-    const nextLine = source.getLineAndCharacterOfPosition(nextStart).line;
-    if (nextLine - previousLine !== 2)
-      violations.push({
-        file: source.fileName,
-        line: nextLine + 1,
-        rule: "function-spacing",
-        message:
-          "Use exactly one blank line between adjacent function implementations, before leading comments.",
-      });
+    const separator = spacingAnchor(source, previous, next);
+    const previousLine = source.getLineAndCharacterOfPosition(separator.previousEnd).line;
+    const nextLine = source.getLineAndCharacterOfPosition(separator.nextStart).line;
+    if (nextLine - previousLine !== 2) separators.push(separator);
   }
-  return violations;
+  return separators;
+}
+
+function spacingViolations(source: ts.SourceFile, parent: ts.Node): StyleViolation[] {
+  return spacingSeparators(source, parent).map(({ nextStart }) => ({
+    file: source.fileName,
+    line: source.getLineAndCharacterOfPosition(nextStart).line + 1,
+    rule: "function-spacing",
+    message:
+      "Use exactly one blank line between adjacent function implementations, before leading comments.",
+  }));
 }
 
 function requiresDocumentation(node: ts.Statement): boolean {
@@ -137,9 +140,33 @@ function isMaintainedSource(file: string): boolean {
   return !/\.(?:test|spec|generated|gen)\.[^.]+$/.test(file);
 }
 
-/** Inspect maintained source, scripts, and application configuration relative to a repository root. */
-export function checkStyle(root = process.cwd()): StyleViolation[] {
-  const files = globSync(
+/**
+ * Repair only whitespace between sibling function implementations. Leading comments,
+ * function contents, and missing public documentation are preserved for human review.
+ */
+export function fixFunctionSpacing(file: string, text: string): string {
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const separators: { previousEnd: number; nextStart: number }[] = [];
+  const visit = (node: ts.Node) => {
+    separators.push(...spacingSeparators(source, node));
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  const newline = text.includes("\r\n") ? "\r\n" : "\n";
+  let fixed = text;
+  for (const { previousEnd, nextStart } of separators.sort(
+    (a, b) => b.previousEnd - a.previousEnd,
+  )) {
+    if (!/^\s*$/.test(text.slice(previousEnd, nextStart))) continue;
+    const prefix = text.slice(text.lastIndexOf("\n", nextStart - 1) + 1, nextStart);
+    const indent = prefix.match(/^[\t ]*/)?.[0] ?? "";
+    fixed = `${fixed.slice(0, previousEnd)}${newline}${newline}${indent}${fixed.slice(nextStart)}`;
+  }
+  return fixed;
+}
+
+function sourceFiles(root: string) {
+  return globSync(
     [
       "apps/*/src/**/*.{ts,tsx,js,mjs,cjs}",
       "packages/*/src/**/*.{ts,tsx,js,mjs,cjs}",
@@ -148,14 +175,26 @@ export function checkStyle(root = process.cwd()): StyleViolation[] {
       "opensenpai.config.mjs",
     ],
     { cwd: root },
-  );
-  return files
+  )
     .filter(isMaintainedSource)
-    .sort()
-    .flatMap((file) => analyzeStyle(file, readFileSync(resolve(root, file), "utf8")));
+    .sort();
+}
+
+/** Inspect maintained source, scripts, and application configuration relative to a repository root. */
+export function checkStyle(root = process.cwd()): StyleViolation[] {
+  return sourceFiles(root).flatMap((file) =>
+    analyzeStyle(file, readFileSync(resolve(root, file), "utf8")),
+  );
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  if (process.argv.includes("--write")) {
+    for (const file of sourceFiles(process.cwd())) {
+      const original = readFileSync(file, "utf8");
+      const fixed = fixFunctionSpacing(file, original);
+      if (fixed !== original) writeFileSync(file, fixed);
+    }
+  }
   const violations = checkStyle();
   for (const violation of violations)
     process.stderr.write(
