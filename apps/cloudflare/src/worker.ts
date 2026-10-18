@@ -20,6 +20,7 @@ interface Environment extends Record<string, unknown> {
   DB: D1Database;
 }
 
+/** Host the Node runtime and own its transactional research storage across restarts. */
 export class OpenSenpaiContainer extends Container<Environment> {
   defaultPort = 4111;
   sleepAfter = "5m";
@@ -51,6 +52,7 @@ function environment(env: Environment) {
   return { ...env, APPLICATION: getContainer(env.APPLICATION, "opensenpai") };
 }
 
+/** Worker ingress, queue consumption, and dispatch repair for the hosted service. */
 export default {
   fetch(request: Request, env: Environment): Promise<Response> {
     return handleRequest(request, environment(env));

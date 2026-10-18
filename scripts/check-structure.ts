@@ -2,6 +2,7 @@ import { globSync, readdirSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+/** Enforce the direct-file cap in maintained source and test directories. */
 export function checkStructure(paths: readonly string[]) {
   const violations: { directory: string; count: number }[] = [];
   const pending = paths.map((path) => resolve(path));
@@ -23,6 +24,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     "src",
     "tests",
     "scripts",
+    "config",
     "apps/*/src",
     "apps/*/tests",
     "packages/*/src",

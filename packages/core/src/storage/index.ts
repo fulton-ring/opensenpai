@@ -58,17 +58,21 @@ export class ResearchStore {
     this.clock = options.clock ?? (() => new Date());
     this.transactionRunner = options.transactionRunner;
   }
+
   async initialize(): Promise<void> {
     await writeLock(this.client, async () => {
       await this.client.batch(migrations, "write");
     });
   }
+
   async close(): Promise<void> {
     this.client.close();
   }
+
   private now() {
     return this.clock().toISOString();
   }
+
   private async transaction<T>(operation: (tx: ResearchConnection) => Promise<T>): Promise<T> {
     if (this.transactionRunner) return this.transactionRunner(operation);
     return writeLock(this.client, async () => {
@@ -84,6 +88,7 @@ export class ResearchStore {
       }
     });
   }
+
   private async observations(db: ResearchConnection, runId: string) {
     return selectData<Observation>(
       db,
@@ -93,6 +98,7 @@ export class ResearchStore {
       [runId],
     );
   }
+
   private async observation(db: ResearchConnection, id: string) {
     return (
       (
@@ -100,6 +106,7 @@ export class ResearchStore {
       )[0] ?? null
     );
   }
+
   private async run(db: ResearchConnection, id: string): Promise<RunRecord | null> {
     const row = (
       await selectData<RunRecord>(db, "app_runs", this.workspaceId, "AND id=?", [id])
@@ -115,6 +122,7 @@ export class ResearchStore {
     row.reported_cost_usd = Number(costs.rows[0]?.reported ?? 0);
     return row;
   }
+
   async createRun(input: RunInput, targets: Target[], estimate: RunEstimate) {
     const hash = await crypto.subtle.digest(
       "SHA-256",
@@ -154,15 +162,19 @@ export class ResearchStore {
       return { run, created: true };
     });
   }
+
   async getRun(id: string) {
     return this.run(this.client, id);
   }
+
   async getObservation(id: string) {
     return this.observation(this.client, id);
   }
+
   async listRuns(query: RunListQuery = {}): Promise<RunRecord[]> {
     return (await this.listRunPage(query)).runs;
   }
+
   async listRunPage(
     query: RunListQuery = {},
   ): Promise<{ runs: RunRecord[]; next_cursor: string | null }> {
@@ -201,6 +213,7 @@ export class ResearchStore {
           : null,
     };
   }
+
   async getResults(query: ResultQuery) {
     const rows = (await this.observations(this.client, query.run_id)).filter(
       (row) =>
@@ -217,6 +230,7 @@ export class ResearchStore {
       next_cursor: rows.length > limit ? (observations.at(-1)?.ordinal ?? null) : null,
     };
   }
+
   private omitRaw(row: Observation) {
     if (!row.result) return;
     Reflect.deleteProperty(row.result, "raw_response");
@@ -227,12 +241,15 @@ export class ResearchStore {
     }
     for (const citation of row.result.citations) Reflect.deleteProperty(citation, "metadata");
   }
+
   async listPending(limit = 100) {
     return this.pending(limit, false);
   }
+
   async listUnqueued(limit = 100, runId?: string) {
     return this.pending(limit, true, runId);
   }
+
   private async pending(limit: number, unqueued: boolean, runId?: string) {
     const args: InValue[] = runId ? [runId] : [];
     args.push(Math.max(1, Math.min(limit, 1000)));
@@ -244,6 +261,7 @@ export class ResearchStore {
       args,
     );
   }
+
   async resetPendingQueue(): Promise<number> {
     return this.transaction(async (tx) => {
       const result = await tx.execute({
@@ -253,6 +271,7 @@ export class ResearchStore {
       return result.rowsAffected;
     });
   }
+
   async markQueued(id: string) {
     await this.transaction(async (tx) => {
       await tx.execute({
@@ -261,6 +280,7 @@ export class ResearchStore {
       });
     });
   }
+
   async setRetrieval(id: string, retrievalId: string) {
     await this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
@@ -270,6 +290,7 @@ export class ResearchStore {
       await writeObservation(tx, row);
     });
   }
+
   private async reserve(
     tx: ResearchConnection,
     id: string,
@@ -289,6 +310,7 @@ export class ResearchStore {
     });
     return true;
   }
+
   async claim(id: string, owner: string, leaseMs = 150_000): Promise<Observation | null> {
     return this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
@@ -320,6 +342,7 @@ export class ResearchStore {
       return row;
     });
   }
+
   async markDispatched(id: string, attemptId: string): Promise<boolean> {
     return this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
@@ -333,6 +356,7 @@ export class ResearchStore {
       return true;
     });
   }
+
   private async settle(
     tx: ResearchConnection,
     attemptId: string,
@@ -349,6 +373,7 @@ export class ResearchStore {
     });
     await this.touchRun(tx, runId);
   }
+
   private async recordUsage(
     tx: ResearchConnection,
     attemptId: string,
@@ -389,6 +414,7 @@ export class ResearchStore {
     });
     return corrected.rowsAffected > 0;
   }
+
   private async touchRun(tx: ResearchConnection, id: string) {
     const run = await this.run(tx, id);
     if (!run) return;
@@ -398,6 +424,7 @@ export class ResearchStore {
       args: [JSON.stringify(run), this.workspaceId, id],
     });
   }
+
   async succeed(id: string, attemptId: string, result: ProviderResult): Promise<void> {
     await this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
@@ -426,6 +453,7 @@ export class ResearchStore {
       );
     });
   }
+
   async fail(
     id: string,
     attemptId: string,
@@ -462,6 +490,7 @@ export class ResearchStore {
       );
     });
   }
+
   async cancelRun(id: string): Promise<RunRecord | null> {
     return this.transaction(async (tx) => {
       const run = await this.run(tx, id);
@@ -482,6 +511,7 @@ export class ResearchStore {
       return this.run(tx, id);
     });
   }
+
   async recoverExpired(): Promise<number> {
     return this.transaction(async (tx) => {
       const rows = await selectData<Observation>(
@@ -513,6 +543,7 @@ export class ResearchStore {
       return rows.length + retrievals.length;
     });
   }
+
   private async recoverObservation(tx: ResearchConnection, row: Observation) {
     const run = await this.run(tx, row.run_id);
     const dispatched = row.dispatched_at !== null;
@@ -548,6 +579,7 @@ export class ResearchStore {
         null,
       );
   }
+
   async getRetrieval(id: string): Promise<RetrievalRecord | null> {
     return (
       (
@@ -561,6 +593,7 @@ export class ResearchStore {
       )[0] ?? null
     );
   }
+
   async claimRetrieval(
     id: string,
     runId: string,
@@ -591,6 +624,7 @@ export class ResearchStore {
       return true;
     });
   }
+
   async finishRetrieval(bundle: RetrievalBundle, owner: string, runId: string): Promise<void> {
     await this.transaction(async (tx) => {
       const row = (
@@ -619,12 +653,14 @@ export class ResearchStore {
       );
     });
   }
+
   private async writeRetrieval(tx: ResearchConnection, row: RetrievalRecord) {
     await tx.execute({
       sql: "UPDATE app_retrievals SET data=? WHERE workspace_id=? AND id=?",
       args: [JSON.stringify(row), this.workspaceId, row.id],
     });
   }
+
   async failRetrieval(
     id: string,
     owner: string,
@@ -645,6 +681,7 @@ export class ResearchStore {
       await this.retrievalFailure(tx, row, error, unknown, partialBundle, notDispatched);
     });
   }
+
   private async retrievalFailure(
     tx: ResearchConnection,
     row: RetrievalRecord,
@@ -673,6 +710,7 @@ export class ResearchStore {
       partialBundle ?? null,
     );
   }
+
   async recordToolCall(tool: string, runId?: string): Promise<void> {
     await this.transaction(async (tx) => {
       await tx.execute({
@@ -681,6 +719,7 @@ export class ResearchStore {
       });
     });
   }
+
   async listToolCalls(runId?: string): Promise<ToolCall[]> {
     const result = await this.client.execute({
       sql: `SELECT tool,run_id,created_at FROM app_tool_calls WHERE workspace_id=? ${runId ? "AND run_id=?" : ""} ORDER BY id`,

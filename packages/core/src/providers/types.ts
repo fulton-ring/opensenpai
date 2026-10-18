@@ -1,14 +1,18 @@
 import type { ProviderInput, ProviderResult, RetrievalBundle, Target } from "../contracts.js";
 
+/** Operator-owned credentials and settings supplied to registered adapters. */
 export type ProviderEnvironment = Record<string, string | undefined>;
+/** Request dependencies shared by SDK factories and custom protocol adapters. */
 export interface ProviderContext {
   env: ProviderEnvironment;
   fetch: typeof globalThis.fetch;
 }
+/** Explain whether the current configuration can execute a particular provider choice. */
 export interface Availability {
   available: boolean;
   reason?: string;
 }
+/** Register a model factory or protocol adapter without modifying research workflows. */
 export interface ModelProvider {
   availability(target: Target, context: ProviderContext): Availability;
   /** Resolve operator-owned pricing/routing for a model selected through MCP. Never generates text. */
@@ -19,6 +23,7 @@ export interface ModelProvider {
   ): Promise<{ id: string; name?: string }[]>;
   execute(input: ProviderInput, context: ProviderContext): Promise<ProviderResult>;
 }
+/** A bounded, shared retrieval operation independent of model generation. */
 export interface RetrievalInput {
   id: string;
   engine: string;
@@ -28,6 +33,7 @@ export interface RetrievalInput {
   options?: Record<string, unknown>;
   signal: AbortSignal;
 }
+/** Supply retrieval execution and trusted cost estimates for reservations. */
 export interface RetrievalProvider {
   availability(context: ProviderContext): Availability;
   estimate(
@@ -35,10 +41,12 @@ export interface RetrievalProvider {
   ): number;
   retrieve(input: RetrievalInput, context: ProviderContext): Promise<RetrievalBundle>;
 }
+/** Operator-selected adapters addressable by stable identifiers in MCP experiments. */
 export interface ProviderRegistry {
   models: Readonly<Record<string, ModelProvider>>;
   retrievals: Readonly<Record<string, RetrievalProvider>>;
 }
+/** Override registry and transport dependencies for library use and verification. */
 export interface ProviderOptions {
   fetch?: typeof globalThis.fetch;
   providers?: ProviderRegistry;

@@ -4,6 +4,7 @@ import { ResearchError, runInputSchema } from "@opensenpai/core/contracts";
 import type { ResearchService } from "@opensenpai/core/service";
 import { z } from "zod";
 
+/** Convert internal failures to actionable MCP errors without exposing secrets or stacks. */
 export function publicError(error: unknown) {
   if (error instanceof ResearchError)
     return { code: error.code, message: error.message, retryable: error.retryable };
@@ -22,6 +23,13 @@ export function publicError(error: unknown) {
 const id = z.string().min(1).max(160).describe("Durable run ID returned by start_run.");
 const outputSchema = z.record(z.string(), z.unknown());
 const runId = z.object({ run_id: id }).strict();
+const discoveryInput = z
+  .object({
+    provider: z.string().min(1).max(80).optional(),
+    model_query: z.string().min(1).max(200).optional(),
+    limit: z.number().int().min(1).max(50).default(20),
+  })
+  .strict();
 
 function tool<S extends z.ZodType>(
   name: string,
@@ -84,24 +92,25 @@ const listInput = z
   })
   .strict();
 
+/** Expose discovery and bounded experiments over the native Mastra MCP transport. */
 export function createResearchMcp(service: ResearchService) {
   return new MCPServer({
     id: "opensenpai",
     name: "OpenSenpai Research",
     version: "0.1.0",
     instructions:
-      "List available targets, estimate spend, then start a bounded research run. Poll get_run; retrieve paginated normalized observations with get_results. Provider execution is never exposed as a tool.",
+      "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to estimate_run/start_run; named presets are optional. No code edits are needed to choose a model. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
     tools: {
       list_targets: tool(
         "list_targets",
-        "List configured models, search modes, pricing, credential availability and observed capabilities. Does not contact providers.",
-        z.object({}).strict(),
+        "Discover registered model/retrieval providers and optional presets. Supply provider/model_query to read a provider's model catalog. No paid generation or search is performed.",
+        discoveryInput,
         true,
-        () => service.listTargets(),
+        (query) => service.listTargets(query),
       ),
       estimate_run: tool(
         "estimate_run",
-        "Estimate observation counts and cost without provider calls. Unpriced targets remain explicit.",
+        "Estimate inline model/search experiments or optional presets using server-owned pricing. May read model metadata; performs no paid generation or search. Unpriced targets remain explicit.",
         runInputSchema,
         true,
         (input) => service.estimateRun(input),

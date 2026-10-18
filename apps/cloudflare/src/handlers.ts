@@ -1,4 +1,5 @@
 /** The ingress speaks HTTP to the native Node application; provider execution stays in Containers. */
+/** Bindings needed to authenticate ingress and durably dispatch accepted observations. */
 export interface DeploymentEnvironment {
   MCP_AUTH_TOKEN: string;
   INTERNAL_EXECUTION_TOKEN: string;
@@ -35,6 +36,7 @@ function observationId(body: unknown): string {
   return body.observationId;
 }
 
+/** Acknowledge queue deliveries only after execution reaches durable terminal state. */
 export async function consumeObservations(
   batch: { messages: readonly Delivery[] },
   env: DeploymentEnvironment,
@@ -56,6 +58,7 @@ export async function consumeObservations(
   }
 }
 
+/** Repair queue delivery for accepted work without creating or scheduling research. */
 export async function dispatchOutbox(env: DeploymentEnvironment): Promise<void> {
   const response = await env.APPLICATION.fetch(internalRequest(env, "outbox", "GET"));
   if (!response.ok) throw new Error(`Outbox unavailable: ${response.status}`);
@@ -79,6 +82,7 @@ export async function dispatchOutbox(env: DeploymentEnvironment): Promise<void> 
   }
 }
 
+/** Route authenticated MCP requests while keeping storage and execution routes private. */
 export async function handleRequest(
   request: Request,
   env: DeploymentEnvironment,
@@ -107,6 +111,7 @@ export async function handleRequest(
   return response;
 }
 
+/** Forward provider credentials while retaining account and database bindings in the Worker. */
 export function applicationEnvironment(bindings: Record<string, unknown>): Record<string, string> {
   if (!bindings.MCP_AUTH_TOKEN || !bindings.INTERNAL_EXECUTION_TOKEN) {
     throw new Error("MCP_AUTH_TOKEN and INTERNAL_EXECUTION_TOKEN secrets are required");

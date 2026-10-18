@@ -2,26 +2,22 @@ import { expect, it } from "vitest";
 import { runInputSchema, targetSchema } from "../src/contracts.js";
 import { estimateRun, loadTargets, targetAvailability } from "../src/targets.js";
 
-it("defaults are explicit and availability never reads process credentials", () => {
-  const targets = loadTargets({});
-  expect(targets.map((t) => t.id)).toEqual([
-    "openai-native",
-    "anthropic-native",
-    "vertex-native",
-    "perplexity-native",
-    "router-plain",
-    "openai-exa",
-    "router-exa",
-  ]);
-  const first = targets[0];
-  if (!first) throw new Error("Missing default");
-  expect(targetAvailability(first, {}).available).toBe(false);
-  expect(targetAvailability(first, { OPENAI_API_KEY: "x" }).available).toBe(true);
+it("keeps presets optional and resolves availability through registered providers", () => {
+  expect(loadTargets({})).toEqual([]);
+  expect(loadTargets({ TARGETS_JSON: "[]" })).toEqual([]);
+  const target = targetSchema.parse({
+    id: "model",
+    transport: "openrouter",
+    model: "any/model",
+    search: { mode: "off" },
+  });
+  expect(targetAvailability(target, {}).available).toBe(false);
+  expect(targetAvailability(target, { OPENROUTER_API_KEY: "test" }).available).toBe(true);
+  expect(targetAvailability({ ...target, transport: "constructor" }, {}).available).toBe(false);
 });
 it("validates configured targets and rejects duplicate IDs", () => {
-  expect(() => loadTargets({ TARGETS_JSON: "[]" })).toThrow();
-  const t = { id: "a", transport: "openai", model: "m", search: { mode: "off" } };
-  expect(() => loadTargets({}, [t, t])).toThrow();
+  const target = { id: "a", transport: "custom-gateway", model: "m", search: { mode: "off" } };
+  expect(() => loadTargets({}, [target, target])).toThrow();
 });
 it("counts shared retrieval once per prompt, repetition and retrieval options", () => {
   const a = targetSchema.parse({
@@ -57,20 +53,20 @@ it("rejects implicit OpenRouter online search in controlled targets", () => {
     false,
   );
 });
-it("disables reasoning in default GPT targets and preserves explicitly configured effort", () => {
-  const targets = loadTargets({});
-  expect(
-    targets.filter((t) => t.model.includes("gpt-6-luna")).map((t) => t.reasoning_effort),
-  ).toEqual(["none", "none", "none", "none"]);
-  const targetsJson = JSON.stringify([
+it("preserves the caller's explicitly configured reasoning effort", () => {
+  const targets = [
     {
       id: "custom",
-      transport: "openai",
-      model: "gpt-6-luna",
+      transport: "openrouter",
+      model: "any/model",
       search: { mode: "off" },
       reasoning_effort: "low",
     },
-  ]);
-  expect(loadTargets({ TARGETS_JSON: targetsJson })[0]?.reasoning_effort).toBe("low");
-  expect(() => loadTargets({ TARGETS_JSON: targetsJson.replace("low", "unbounded") })).toThrow();
+  ];
+  expect(loadTargets({ TARGETS_JSON: JSON.stringify(targets) })[0]?.reasoning_effort).toBe("low");
+  expect(() =>
+    loadTargets({
+      TARGETS_JSON: JSON.stringify([{ ...targets[0], reasoning_effort: "unbounded" }]),
+    }),
+  ).toThrow();
 });

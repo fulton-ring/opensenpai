@@ -24,7 +24,7 @@ RUN pnpm exec turbo run build --filter=@opensenpai/server...
 
 FROM base AS production-dependencies
 # Install inside Linux so optional native modules match the image, never the host.
-RUN pnpm install --prod --frozen-lockfile --filter @opensenpai/server... && pnpm store prune
+RUN pnpm install --prod --frozen-lockfile --filter @opensenpai/server... --filter . && pnpm store prune
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=4111 DATABASE_URL=file:/app/data/opensenpai.db
@@ -35,6 +35,8 @@ COPY --from=production-dependencies /app/apps/server ./apps/server
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/apps/server/dist ./apps/server/dist
 COPY package.json ./
+COPY opensenpai.config.mjs ./
+COPY config ./config
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 4111

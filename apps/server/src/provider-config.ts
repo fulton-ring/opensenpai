@@ -35,7 +35,7 @@ function validateEntries(value: unknown, methods: string[], optionalMethods: str
   if (!object(value)) return invalidConfig();
   for (const [id, entry] of Object.entries(value)) {
     if (
-      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(id) ||
+      !/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/.test(id) ||
       !object(entry) ||
       methods.some((method) => typeof entry[method] !== "function") ||
       optionalMethods.some(

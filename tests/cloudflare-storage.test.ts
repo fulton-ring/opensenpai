@@ -52,13 +52,13 @@ const env = {
   WORKSPACE_ID: "native-test",
   MCP_AUTH_TOKEN: "native-durable-mcp-token",
   INTERNAL_EXECUTION_TOKEN: "native-durable-internal-token",
-  OPENAI_API_KEY: "unused-fixture-key",
+  OPENROUTER_API_KEY: "unused-fixture-key",
   DATABASE_URL: "unsupported:never-open-libsql",
   MASTRA_STORAGE_URL: "unsupported:never-open-libsql",
 };
 const target = targetSchema.parse({
   id: "fixture",
-  transport: "openai",
+  transport: "openrouter",
   model: "fixture",
   search: { mode: "off" },
   pricing: { input_per_million: 1, output_per_million: 1 },

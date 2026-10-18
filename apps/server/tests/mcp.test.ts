@@ -29,6 +29,24 @@ function service() {
   } as unknown as ResearchService;
 }
 describe("native MCP tools", () => {
+  it("accepts model discovery through MCP rather than requiring preset aliases", async () => {
+    const research = service();
+    research.listTargets = async (query) => ({ query }) as never;
+    const mcp = createResearchMcp(research);
+    try {
+      expect(
+        await mcp.executeTool("list_targets", {
+          provider: "openrouter",
+          model_query: "glm",
+          limit: 5,
+        }),
+      ).toMatchObject({
+        output: { query: { provider: "openrouter", model_query: "glm", limit: 5 } },
+      });
+    } finally {
+      await mcp.close();
+    }
+  });
   it("advertises exactly seven research tools with bounded inputs and no execution escape hatch", async () => {
     const mcp = createResearchMcp(service());
     const list = await mcp.getToolListInfo();

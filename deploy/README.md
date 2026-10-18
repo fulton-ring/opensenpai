@@ -6,7 +6,7 @@ The TypeScript build runs on the builder's native architecture. Production depen
 
 ## Standalone Docker
 
-Create your ignored `.env` from the root example and set `MCP_AUTH_TOKEN`, target configuration, and provider credentials. Listing targets and estimating runs do not make paid calls.
+Create your ignored `.env` from the root example and set `MCP_AUTH_TOKEN`, provider configuration, and provider credentials. Listing targets and estimating runs do not make paid calls. Inline MCP arguments select models/search, so `TARGETS_JSON` is optional. The image includes `opensenpai.config.mjs` and `config/providers/`; bind-mount a trusted replacement module and its provider files to customize a local deployment, or rebuild the image for Cloudflare. Split API and worker processes must load the same modules. Supply any extra SDK dependencies when building your customized image.
 
 ```sh
 docker compose up --build -d
@@ -33,7 +33,7 @@ To use managed libSQL/Turso, supply `DATABASE_URL` and `DATABASE_AUTH_TOKEN`, an
 docker compose -f compose.split.yaml --profile split up --build -d
 ```
 
-Both processes must share `WORKSPACE_ID` and target configuration. Back up the database volume or remote service independently of container images. The split profile is intended for trusted private networks; database and Valkey ports are not published.
+Both processes must share `WORKSPACE_ID` and provider configuration. Back up the database volume or remote service independently of container images. The split profile is intended for trusted private networks; database and Valkey ports are not published.
 
 For a local file backup, stop the application cleanly, copy the research database and its sibling Mastra metadata database, then restart. Restore with the application stopped, preserving writable ownership. For remote libSQL, use the server or managed provider's snapshot/restore facilities. Keep provider credentials outside database backups.
 
@@ -65,10 +65,9 @@ pnpm exec wrangler queues create opensenpai-observations
 pnpm exec wrangler queues create opensenpai-observations-dlq
 pnpm exec wrangler secret put MCP_AUTH_TOKEN --config apps/cloudflare/wrangler.json
 pnpm exec wrangler secret put INTERNAL_EXECUTION_TOKEN --config apps/cloudflare/wrangler.json
-pnpm exec wrangler secret put TARGETS_JSON --config apps/cloudflare/wrangler.json
 ```
 
-Use independent random tokens for MCP and internal execution. Add each provider credential referenced by the targets with `wrangler secret put <ENV_NAME> --config apps/cloudflare/wrangler.json`. Provider string bindings are forwarded to the container at startup; database, queue, and Durable Object bindings stay in the Worker. Remote database URLs and Cloudflare account credentials are excluded. Set `WORKSPACE_ID` in `apps/cloudflare/wrangler.json`. The adapter sets `STORAGE_BACKEND=cloudflare`; no remote libSQL credentials are required.
+Use independent random tokens for MCP and internal execution. Add each credential referenced by the provider modules with `wrangler secret put <ENV_NAME> --config apps/cloudflare/wrangler.json`. Provider string bindings are forwarded to the container at startup; database, queue, and Durable Object bindings stay in the Worker. Remote database URLs and Cloudflare account credentials are excluded. Set `WORKSPACE_ID` in `apps/cloudflare/wrangler.json`. The adapter sets `STORAGE_BACKEND=cloudflare`; no remote libSQL credentials are required.
 
 Set `MCP_ALLOWED_HOSTS` in Wrangler vars to your public Worker hostname (without scheme or port). The adapter adds the private container hostname and loopback hosts. Set `MCP_ALLOWED_ORIGINS` for browser clients connecting from a different origin.
 

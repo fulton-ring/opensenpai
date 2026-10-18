@@ -59,6 +59,7 @@ export async function main(
     });
     return shutdown;
   };
+
   const signal = () => {
     const deadline = setTimeout(() => {
       process.stderr.write("Shutdown deadline exceeded. Durable leases will recover on restart.\n");
@@ -74,6 +75,7 @@ export async function main(
       })
       .finally(() => clearTimeout(deadline));
   };
+
   const stdinEnd = () => signal();
   process.once("SIGINT", signal);
   process.once("SIGTERM", signal);

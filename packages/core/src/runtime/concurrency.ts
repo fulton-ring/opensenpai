@@ -12,6 +12,7 @@ export class Concurrency {
   private active = 0;
   private readonly waiters: Waiter[] = [];
   constructor(private readonly limit: number) {}
+
   acquire(signal: AbortSignal): Promise<() => void> {
     signal.throwIfAborted();
     if (this.active < this.limit) {
@@ -32,6 +33,7 @@ export class Concurrency {
       signal.addEventListener("abort", waiter.abort, { once: true });
     });
   }
+
   private release(): () => void {
     let released = false;
     return () => {

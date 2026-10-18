@@ -14,6 +14,7 @@ export type Connection = Pick<Transaction, "execute">;
 export function decode<T>(rows: ResultSet): T[] {
   return rows.rows.map((row) => JSON.parse(String(row.data)) as T);
 }
+
 /** Serialize nested values deterministically for idempotency snapshot hashing. */
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -26,6 +27,7 @@ export function canonical(value: unknown): string {
   }
   return JSON.stringify(value) ?? "null";
 }
+
 /** Persist an observation within its workspace using the caller’s transaction. */
 export async function writeObservation(db: Connection, observation: Observation) {
   await db.execute({
@@ -33,6 +35,7 @@ export async function writeObservation(db: Connection, observation: Observation)
     args: [JSON.stringify(observation), observation.workspace_id, observation.id],
   });
 }
+
 /** Count every durable observation state for run aggregation. */
 export function counts(observations: Observation[]): RunRecord["counts"] {
   const result = {
@@ -46,6 +49,7 @@ export function counts(observations: Observation[]): RunRecord["counts"] {
   for (const item of observations) result[item.status]++;
   return result;
 }
+
 /** Derive a run’s lifecycle from observation counts and its cancellation request. */
 export function status(run: RunRecord): RunRecord["status"] {
   if (run.counts.running) return "running";
@@ -54,6 +58,7 @@ export function status(run: RunRecord): RunRecord["status"] {
   if (run.counts.succeeded === run.total) return "succeeded";
   return run.counts.succeeded ? "partial" : "failed";
 }
+
 /** Create an unpersisted workspace batch with zero settled and reserved spend. */
 export function newRun(
   input: RunInput,
@@ -76,6 +81,7 @@ export function newRun(
     updated_at: now,
   };
 }
+
 /** Expand a run into prompt-target repetitions using snapshotted targets and estimates. */
 export function newObservations(
   run: RunRecord,
@@ -121,6 +127,7 @@ export function newObservations(
   }
   return rows;
 }
+
 /** Read JSON records from a trusted internal table within one workspace. */
 export async function selectData<T>(
   db: Connection,

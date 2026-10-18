@@ -28,6 +28,7 @@ export function retrievalAuthorization(
     ),
   };
 }
+
 /** Represent retrieval settlement, or known zero usage when no request was dispatched. */
 export function retrievalUsage(bundle?: RetrievalBundle): Usage {
   return {
@@ -41,6 +42,7 @@ export function retrievalUsage(bundle?: RetrievalBundle): Usage {
     raw: {},
   };
 }
+
 /** Return explicit zero usage for an operation confirmed never to have been dispatched. */
 export function undispatchedUsage(): Usage {
   return {
@@ -54,6 +56,7 @@ export function undispatchedUsage(): Usage {
     raw: {},
   };
 }
+
 /** Run the host spend gate and convert unexpected failures into a safe denial. */
 export async function authorizeSpend(
   options: RuntimeOptions,
@@ -66,6 +69,7 @@ export async function authorizeSpend(
     throw new ResearchError("authorization_denied", "Spend authorization was denied");
   }
 }
+
 /** Report background failures without allowing a host callback to break settlement. */
 export function reportError(options: RuntimeOptions, error: unknown): void {
   try {
@@ -74,6 +78,7 @@ export function reportError(options: RuntimeOptions, error: unknown): void {
     return;
   }
 }
+
 /** Notify the host of settlement while retaining runtime progress if reporting fails. */
 export async function settleSpend(
   options: RuntimeOptions,

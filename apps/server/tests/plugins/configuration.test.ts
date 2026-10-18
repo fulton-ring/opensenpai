@@ -108,6 +108,17 @@ describe("trusted local provider configuration", () => {
     });
     await expect(loadProviderConfiguration({}, {}, path)).rejects.not.toThrow(/SECRET_FROM_MODULE/);
   });
+  it.each(["0bad", "bad.name", "a".repeat(81)])(
+    "rejects adapter IDs that MCP cannot select: %s",
+    async (id) => {
+      const path = await directory();
+      const source = `export default { providers: { models: { ${JSON.stringify(id)}: { availability() {}, execute() {} } }, retrievals: {} } }`;
+      await moduleFile(path, source);
+      await expect(loadProviderConfiguration({}, {}, path)).rejects.toMatchObject({
+        code: "INVALID_CONFIG",
+      });
+    },
+  );
   it("rejects invalid module targets even when environment targets override them", async () => {
     const path = await directory();
     await moduleFile(path, "export default { targets: [{ id: 42 }] }");

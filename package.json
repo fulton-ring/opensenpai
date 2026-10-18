@@ -15,8 +15,8 @@
     "build": "turbo run build",
     "typecheck": "turbo run typecheck && tsc --noEmit -p tsconfig.json",
     "test": "turbo run test && vitest run",
-    "lint": "biome check . && tsx scripts/check-structure.ts",
-    "format": "biome check --write .",
+    "lint": "biome check . && tsx scripts/check-structure.ts && tsx scripts/check-style.ts",
+    "format": "biome check --write . && tsx scripts/check-style.ts --write",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "test:agent": "tsx --env-file-if-exists=.env scripts/e2e-real-agent.ts"
   },

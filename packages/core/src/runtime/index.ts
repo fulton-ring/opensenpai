@@ -70,6 +70,7 @@ export class Runtime {
       recovery: { workflows: "off", durableAgents: "off" },
     });
   }
+
   async start() {
     if (this.started) return;
     this.started = true;
@@ -87,10 +88,12 @@ export class Runtime {
         }, this.options.repairIntervalMs ?? 5_000);
     }
   }
+
   private async restoreLocalQueue() {
     if (this.options.store.resetPendingQueue) await this.options.store.resetPendingQueue();
     else await this.dispatch(await this.options.store.listPending(1000));
   }
+
   private async drain() {
     for (let batch = 0; batch < 10 && !this.stopped; batch++) {
       const pending = await this.options.store.listUnqueued(100);
@@ -98,6 +101,7 @@ export class Runtime {
       await this.dispatch(pending);
     }
   }
+
   private async repair() {
     if (this.stopped || this.repairing) return;
     this.repairing = (async () => {
@@ -112,6 +116,7 @@ export class Runtime {
       this.repairing = undefined;
     }
   }
+
   async dispatch(observations: Observation[]) {
     if (this.stopped) throw new ResearchError("runtime_stopped", "Runtime has stopped");
     if (this.options.dispatchMode === "external") return;
@@ -124,6 +129,7 @@ export class Runtime {
       await this.options.store.markQueued(observation.id);
     }
   }
+
   async executeObservation(id: string) {
     if (this.options.role === "api" && this.options.dispatchMode !== "external") return;
     await this.mastra.getStorage()?.init();
@@ -132,10 +138,12 @@ export class Runtime {
     const outcome = await run.start({ inputData: { id } });
     if (outcome.status === "failed") throw outcome.error;
   }
+
   async cancel(runId: string) {
     await this.options.store.cancelRun(runId);
     this.executor.cancel(runId);
   }
+
   async stop() {
     if (this.stopped) return;
     this.stopped = true;

@@ -36,11 +36,13 @@ function knownRejection(error: unknown): boolean {
       error.code === "provider_cancelled")
   );
 }
+
 function responseFromError(error: unknown): ProviderResult | null {
   return error instanceof ResearchError && "result" in error
     ? (error.result as ProviderResult)
     : null;
 }
+
 function failure(error: unknown): Failure {
   if (error instanceof ResearchError)
     return { code: error.code, message: error.message, retryable: false };
@@ -50,6 +52,7 @@ function failure(error: unknown): Failure {
     retryable: false,
   };
 }
+
 // Only idempotent persistence is retried; paid operations never enter this helper.
 async function persistEvidence(write: () => Promise<void>): Promise<void> {
   try {
@@ -58,6 +61,7 @@ async function persistEvidence(write: () => Promise<void>): Promise<void> {
     await write();
   }
 }
+
 function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
@@ -66,6 +70,7 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
+
 /** Derive a stable bundle key so equivalent search work is shared within one run. */
 export function retrievalId(observation: Observation): string {
   return `retrieval_${createHash("sha256")
@@ -102,17 +107,20 @@ export class ObservationExecutor {
   ) {
     this.concurrency = new Concurrency(concurrencyLimit(options.maxConcurrent));
   }
+
   cancel(runId: string) {
     for (const item of this.active.values())
       if (item.observation.run_id === runId)
         item.controller.abort(new ResearchError("cancelled", "Run was cancelled"));
   }
+
   stop() {
     this.stopped = true;
     this.shutdown.abort(new ResearchError("runtime_stopped", "Runtime stopped"));
     for (const item of this.active.values())
       item.controller.abort(new ResearchError("runtime_stopped", "Runtime stopped"));
   }
+
   async execute(id: string, workflowSignal: AbortSignal): Promise<{ id: string }> {
     if ((this.options.role === "api" && this.options.dispatchMode !== "external") || this.stopped)
       return { id };
@@ -124,6 +132,7 @@ export class ObservationExecutor {
       release();
     }
   }
+
   private async executeClaimed(id: string, workflowSignal: AbortSignal): Promise<{ id: string }> {
     const observation = await this.options.store.claim(id, this.owner, 150_000);
     if (!observation?.attempt_id) return { id };
@@ -156,6 +165,7 @@ export class ObservationExecutor {
     await this.settle(attempt);
     return { id };
   }
+
   private async settle(attempt: Attempt) {
     await settleSpend(
       this.options,
@@ -164,6 +174,7 @@ export class ObservationExecutor {
       attempt.result?.usage ?? (attempt.notDispatched ? undispatchedUsage() : null),
     );
   }
+
   private monitor(attempt: Attempt, workflowSignal: AbortSignal) {
     const { controller, observation } = attempt;
     const abort = () => controller.abort(workflowSignal.reason);
@@ -197,11 +208,13 @@ export class ObservationExecutor {
       workflowSignal.removeEventListener("abort", abort);
     };
   }
+
   private async check(attempt: Attempt) {
     attempt.controller.signal.throwIfAborted();
     if ((await this.options.store.getRun(attempt.observation.run_id))?.cancel_requested)
       throw new ResearchError("cancelled", "Run was cancelled");
   }
+
   private async run(attempt: Attempt) {
     const { observation, authorization, controller } = attempt;
     await this.check(attempt);
@@ -230,6 +243,7 @@ export class ObservationExecutor {
     attempt.providerCall = providerCall;
     await this.persistResult(attempt, await bounded(providerCall, controller.signal));
   }
+
   private async persistResult(attempt: Attempt, result: ProviderResult): Promise<void> {
     attempt.result = result;
     await persistEvidence(() =>
@@ -237,6 +251,7 @@ export class ObservationExecutor {
     );
     attempt.terminal = "succeeded";
   }
+
   private async persistFailure(attempt: Attempt, error: unknown) {
     const known = knownRejection(error);
     attempt.notDispatched =
@@ -253,6 +268,7 @@ export class ObservationExecutor {
       attempt.result ?? undefined,
     );
   }
+
   private preserveLateResult(attempt: Attempt) {
     if (!attempt.providerCall || attempt.result || !attempt.controller.signal.aborted) return;
     // Abort is best effort; successful late responses still carry incurred cost.
@@ -274,6 +290,7 @@ export class ObservationExecutor {
       )
       .catch((error) => reportError(this.options, error));
   }
+
   private async retrieve(
     observation: Observation,
     signal: AbortSignal,
@@ -299,6 +316,7 @@ export class ObservationExecutor {
       return this.waitForRetrieval(id, signal);
     return this.fetchRetrieval(observation, id, signal);
   }
+
   private async fetchRetrieval(
     observation: Observation,
     id: string,
@@ -360,6 +378,7 @@ export class ObservationExecutor {
     await this.persistBundle(observation, authorization, bundle);
     return bundle;
   }
+
   private async persistBundle(
     observation: Observation,
     authorization: SpendAuthorization,
@@ -376,6 +395,7 @@ export class ObservationExecutor {
     }
     await settleSpend(this.options, authorization, "succeeded", retrievalUsage(bundle));
   }
+
   private async waitForRetrieval(id: string, signal: AbortSignal): Promise<RetrievalBundle> {
     while (true) {
       signal.throwIfAborted();
