@@ -1,5 +1,7 @@
 # OpenSenpai
 
+Built and maintained by [Fulton Ring](https://fultonring.com).
+
 OpenSenpai is an MCP and REST service for running bounded research experiments across model providers and search modes. An external agent supplies prompts, chooses targets, starts a run, and retrieves durable results for its own analysis. That agent owns scheduling and synthesis; OpenSenpai executes accepted work through native Mastra workflows and stores evidence in libSQL locally or Cloudflare-native databases when hosted.
 
 The pnpm/Turborepo workspace contains:
