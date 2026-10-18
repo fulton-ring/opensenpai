@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { noopObserve } from "@mastra/core/tools";
@@ -72,4 +72,108 @@ describe("application composition", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+});
+
+it("rejects bad provider modules before touching storage", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opensenpai-invalid-config-"));
+  const configPath = join(directory, "invalid.mjs");
+  await writeFile(configPath, "throw new Error('credential-must-not-escape')");
+  try {
+    await expect(
+      createApplication(
+        {},
+        {
+          transport: "stdio",
+          configPath,
+          databaseUrl: "file:/never-created/provider-config.db",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("uses one custom provider registry for discovery and execution", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "opensenpai-plugin-app-"));
+  let app: Awaited<ReturnType<typeof createApplication>> | undefined;
+  const calls: string[] = [];
+  const providers = {
+    models: {
+      custom: {
+        availability() {
+          calls.push("availability");
+          return { available: true };
+        },
+        async execute() {
+          calls.push("execute");
+          return {
+            answer: "custom provider answer",
+            requested_model: "custom-model",
+            model: "custom-model",
+            serving_provider: "custom",
+            response_id: "custom-response",
+            finish_reason: "stop",
+            sources: [],
+            citations: [],
+            extracted_urls: [],
+            search_activity: {
+              requested: "off" as const,
+              observed: "not_observed" as const,
+              engine: null,
+            },
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              reasoning_tokens: null,
+              cached_tokens: null,
+              search_requests: 0,
+              reported_cost_usd: 0,
+              estimated_cost_usd: 0,
+              raw: {},
+            },
+            raw_response: {},
+            warnings: [],
+          };
+        },
+      },
+    },
+    retrievals: {},
+  };
+  try {
+    app = await createApplication(
+      {
+        INTERNAL_EXECUTION_TOKEN: "private-token-long-enough",
+        OBSERVATION_DISPATCH_MODE: "external",
+      },
+      {
+        databaseUrl: `file:${join(directory, "research.db")}`,
+        transport: "stdio",
+        listen: false,
+        providers,
+        targets: [
+          { id: "custom", transport: "custom", model: "custom-model", search: { mode: "off" } },
+        ],
+      },
+    );
+    const listed = await app.service.listTargets();
+    expect(listed.targets).toMatchObject([{ id: "custom", available: true }]);
+    const { run } = await app.service.startRun({
+      prompts: [{ id: "p", text: "Question?" }],
+      targets: ["custom"],
+      repetitions: 1,
+      idempotency_key: "plugin-run",
+    });
+    const { observations } = await app.service.getResults({ run_id: run.id });
+    const observation = observations[0];
+    if (!observation) throw new Error("Missing queued observation");
+    await app.runtime.executeObservation(observation.id);
+    const result = await app.service.getResults({ run_id: run.id });
+    expect(result.observations[0]?.result?.answer).toBe("custom provider answer");
+    expect(calls).toContain("availability");
+    expect(calls.filter((call) => call === "execute")).toHaveLength(1);
+  } finally {
+    await app?.close();
+    await rm(directory, { recursive: true, force: true });
+  }
 });

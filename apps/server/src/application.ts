@@ -9,7 +9,6 @@ import { ResearchError } from "@opensenpai/core/contracts";
 import { createRuntime, type RuntimeOptions } from "@opensenpai/core/runtime";
 import { ResearchService } from "@opensenpai/core/service";
 import { type ResearchStorage, ResearchStore } from "@opensenpai/core/storage";
-import { loadTargets } from "@opensenpai/core/targets";
 import {
   type BridgeFetch,
   createCloudflareD1Storage,
@@ -18,9 +17,19 @@ import {
 import { type ApplicationOptions, loadConfig } from "./config.js";
 import { createHttpServer } from "./http.js";
 import { createResearchMcp } from "./mcp.js";
+import { loadProviderConfiguration } from "./provider-config.js";
 
 export type CreateApplicationOptions = ApplicationOptions &
-  Pick<RuntimeOptions, "hooks" | "executeProvider" | "retrieveExa" | "pubsub" | "storage"> & {
+  Pick<
+    RuntimeOptions,
+    | "hooks"
+    | "executeProvider"
+    | "retrieveExa"
+    | "retrieveSearch"
+    | "providers"
+    | "pubsub"
+    | "storage"
+  > & {
     bridgeFetch?: BridgeFetch;
   };
 async function ensureParent(url: string) {
@@ -35,11 +44,12 @@ export async function createApplication(
 ) {
   const config = loadConfig(env, options);
   validateSharedInfrastructure(config, env.VALKEY_URL, Boolean(options.pubsub));
-  const targets = loadTargets(env, options.targets);
+  const { targets, providers } = await loadProviderConfiguration(env, options);
   const { store, nativeStorage } = await createStorage(config, env, options);
   const runtime = createRuntime({
     store,
     env,
+    providers,
     role: config.role,
     dispatchMode: config.dispatchMode,
     directOnly: config.dispatchMode === "external",
@@ -49,6 +59,7 @@ export async function createApplication(
     ...(options.hooks ? { hooks: options.hooks } : {}),
     ...(options.executeProvider ? { executeProvider: options.executeProvider } : {}),
     ...(options.retrieveExa ? { retrieveExa: options.retrieveExa } : {}),
+    ...(options.retrieveSearch ? { retrieveSearch: options.retrieveSearch } : {}),
     ...(options.pubsub ? { pubsub: options.pubsub } : {}),
     onError: () =>
       process.stderr.write("Research runtime operation failed; inspect durable run status.\n"),
@@ -57,6 +68,7 @@ export async function createApplication(
     store,
     runtime,
     targets,
+    providers,
     env,
     dispatchMode: config.dispatchMode,
   });

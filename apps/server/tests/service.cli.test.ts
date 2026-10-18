@@ -6,10 +6,25 @@ describe("CLI entry point", () => {
     const write = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     try {
       expect(await main(["--help"], {})).toBeUndefined();
-      expect(write).toHaveBeenCalledWith(expect.stringContaining("--transport"));
+      expect(write).toHaveBeenCalledWith(expect.stringContaining("--config"));
     } finally {
       write.mockRestore();
     }
+  });
+  it("selects an explicit trusted configuration path before opening storage", async () => {
+    await expect(
+      main(
+        [
+          "--config",
+          "/missing-opensenpai-config.mjs",
+          "--transport",
+          "stdio",
+          "--database-url",
+          "file:/never-created/cli-config.db",
+        ],
+        {},
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIG" });
   });
   it("rejects unknown flags and invalid port before starting a server", async () => {
     await expect(main(["--unknown"], {})).rejects.toThrow();

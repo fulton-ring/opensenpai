@@ -9,6 +9,7 @@ const help = `Usage: opensenpai [options]
   --role all|api|worker       Process role (default: all)
   --transport http|stdio     MCP transport (default: http)
   --database-url URL         Durable LibSQL database URL
+  --config PATH              Trusted local provider configuration module
   --host HOST                Bind address (default: 127.0.0.1)
   --port PORT                HTTP port (default: 4111)
   --help                     Show this help
@@ -29,6 +30,7 @@ export async function main(
       role: { type: "string" },
       transport: { type: "string" },
       "database-url": { type: "string" },
+      config: { type: "string" },
       port: { type: "string" },
       host: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -42,6 +44,7 @@ export async function main(
     role: values.role,
     transport: values.transport,
     databaseUrl: values["database-url"],
+    configPath: values.config,
     port: values.port === undefined ? undefined : Number(values.port),
     host: values.host,
   } as ApplicationOptions;

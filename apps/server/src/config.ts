@@ -8,6 +8,7 @@ export interface ApplicationOptions {
   port?: number;
   host?: string;
   targets?: unknown;
+  configPath?: string;
   listen?: boolean;
 }
 export function loadConfig(
