@@ -10,75 +10,8 @@ import {
 import { defaultProviders } from "./providers/index.js";
 import type { ProviderRegistry } from "./providers/types.js";
 
-// Operator-editable examples live in config/providers; these are library defaults.
-export const defaultTargets: Target[] = [
-  {
-    id: "openai-native",
-    model: "openai/gpt-6-luna",
-    provider: "openai",
-    input: 0.1,
-    output: 0.5,
-    search: 0.01,
-  },
-  {
-    id: "anthropic-native",
-    model: "anthropic/claude-haiku-5.5",
-    provider: "anthropic",
-    input: 0.1,
-    output: 0.5,
-    search: 0.01,
-  },
-  {
-    id: "vertex-native",
-    model: "google/gemini-3.8-flash",
-    provider: "google-vertex/global",
-    input: 0.825,
-    output: 4.125,
-    search: 0.014,
-  },
-  {
-    id: "perplexity-native",
-    model: "perplexity/sonar",
-    provider: "perplexity",
-    input: 1,
-    output: 1,
-    search: 0.005,
-  },
-].map((item) =>
-  targetSchema.parse({
-    id: item.id,
-    transport: "openrouter",
-    model: item.model,
-    provider_options: { provider: item.provider },
-    search: { mode: "native" },
-    ...(item.model.includes("gpt-6-luna") ? { reasoning_effort: "none" } : {}),
-    pricing: {
-      input_per_million: item.input,
-      output_per_million: item.output,
-      search_per_request: item.search,
-    },
-  }),
-);
-for (const [id, search] of [
-  ["router-plain", { mode: "off" }],
-  ["router-exa", { mode: "controlled", engine: "exa" }],
-  ["router-perplexity-search", { mode: "server", engine: "perplexity" }],
-] as const)
-  defaultTargets.push(
-    targetSchema.parse({
-      id,
-      transport: "openrouter",
-      model: "openai/gpt-6-luna",
-      reasoning_effort: "none",
-      search,
-      provider_options: { provider: "openai" },
-      pricing: {
-        input_per_million: 0.1,
-        output_per_million: 0.5,
-        search_per_request: search.mode === "server" ? 0.005 : 0,
-      },
-    }),
-  );
+// Presets are optional; agents select models and search through MCP.
+export const defaultTargets: Target[] = [];
 
 export function loadTargets(
   env: Record<string, string | undefined>,
@@ -86,7 +19,7 @@ export function loadTargets(
 ): Target[] {
   const value =
     configuredTargets ?? (env.TARGETS_JSON ? JSON.parse(env.TARGETS_JSON) : defaultTargets);
-  const targets = z.array(targetSchema).min(1).max(100).parse(value);
+  const targets = z.array(targetSchema).max(100).parse(value);
   if (new Set(targets.map((target) => target.id)).size !== targets.length)
     throw new ResearchError("invalid_targets", "Target IDs must be unique");
   return targets;

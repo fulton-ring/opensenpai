@@ -13,6 +13,10 @@ export interface ModelProvider {
   availability(target: Target, context: ProviderContext): Availability;
   /** Resolve operator-owned pricing/routing for a model selected through MCP. Never generates text. */
   resolveTarget?(target: Target, context: ProviderContext): Promise<Target>;
+  listModels?(
+    query: { query?: string; limit: number },
+    context: ProviderContext,
+  ): Promise<{ id: string; name?: string }[]>;
   execute(input: ProviderInput, context: ProviderContext): Promise<ProviderResult>;
 }
 export interface RetrievalInput {
