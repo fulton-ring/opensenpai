@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   accountSpend,
@@ -716,3 +716,62 @@ it("verifies inline selections carried through an external agent prompt and nati
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("passes native and explicitly selected plugin credentials only to the stdio MCP server", async () => {
+  const { harnessOptions, makeMcpConfig, agentEnvironment } = await import(
+    "../scripts/e2e-real-agent.js"
+  );
+  const env = {
+    OPENSENPAI_LIVE_TESTS: "1",
+    ANTHROPIC_API_KEY: "agent-only",
+    OPENROUTER_API_KEY: "research-router",
+    OPENROUTER_NATIVE_API_KEY: "native-only",
+    EXA_API_KEY: "retrieval-only",
+    TARGETS_JSON: "[]",
+    CUSTOM_PLUGIN_KEY: "selected-plugin",
+    UNSELECTED_SECRET: "must-not-pass",
+    OPENAI_API_KEY: "obsolete-direct",
+    OPENSENPAI_TARGETS_JSON: "obsolete-targets",
+    E2E_SERVER_ENV_KEYS: "CUSTOM_PLUGIN_KEY",
+  };
+  const options = harnessOptions(["--transport", "stdio"], env);
+  const config = makeMcpConfig(options, env, "/tmp/db") as {
+    mcpServers: { aeo: { env: Record<string, string> } };
+  };
+  expect(config.mcpServers.aeo.env).toEqual({
+    OPENROUTER_API_KEY: "research-router",
+    OPENROUTER_NATIVE_API_KEY: "native-only",
+    EXA_API_KEY: "retrieval-only",
+    TARGETS_JSON: "[]",
+    CUSTOM_PLUGIN_KEY: "selected-plugin",
+    OPENSENPAI_CONFIG: resolve("opensenpai.config.mjs"),
+    WORKSPACE_ID: "local",
+  });
+  const agent = agentEnvironment(env, "/tmp/isolated-agent");
+  expect(agent.ANTHROPIC_API_KEY).toBe("agent-only");
+  for (const key of [
+    "OPENROUTER_NATIVE_API_KEY",
+    "OPENROUTER_API_KEY",
+    "EXA_API_KEY",
+    "CUSTOM_PLUGIN_KEY",
+    "OPENSENPAI_CONFIG",
+    "UNSELECTED_SECRET",
+    "E2E_SERVER_ENV_KEYS",
+  ])
+    expect(agent[key]).toBeUndefined();
+  const explicit = makeMcpConfig(
+    options,
+    { ...env, OPENSENPAI_CONFIG: "config/custom.mjs" },
+    "/tmp/db",
+  ) as { mcpServers: { aeo: { env: Record<string, string> } } };
+  expect(explicit.mcpServers.aeo.env.OPENSENPAI_CONFIG).toBe(resolve("config/custom.mjs"));
+});
+it.each(["BAD-KEY", "1BAD", "GOOD_KEY, BAD=VALUE", "GOOD_KEY, bad key"])(
+  "rejects invalid explicit server environment key list %j",
+  async (keys) => {
+    const { harnessOptions, makeMcpConfig } = await import("../scripts/e2e-real-agent.js");
+    const env = { OPENSENPAI_LIVE_TESTS: "1", E2E_SERVER_ENV_KEYS: keys };
+    const options = harnessOptions(["--transport", "stdio"], env);
+    expect(() => makeMcpConfig(options, env, "/tmp/db")).toThrow(/E2E_SERVER_ENV_KEYS/);
+  },
+);

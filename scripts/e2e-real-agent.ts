@@ -223,6 +223,29 @@ export function agentEnvironment(env: NodeJS.ProcessEnv, cwd: string): NodeJS.Pr
   };
 }
 
+function serverEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const custom = (env.E2E_SERVER_ENV_KEYS ?? "")
+    .split(",")
+    .map((key) => key.trim())
+    .filter(Boolean);
+  if (custom.some((key) => !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)))
+    throw new Error("E2E_SERVER_ENV_KEYS must contain valid environment variable names");
+  const keys = [
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_NATIVE_API_KEY",
+    "EXA_API_KEY",
+    "TARGETS_JSON",
+    "OPENSENPAI_CONFIG",
+    ...custom,
+  ];
+  return {
+    ...Object.fromEntries(
+      keys.filter((key) => env[key] !== undefined).map((key) => [key, env[key]]),
+    ),
+    OPENSENPAI_CONFIG: resolve(env.OPENSENPAI_CONFIG ?? join(ROOT, "opensenpai.config.mjs")),
+  };
+}
+
 /** Build the selected HTTP or stdio MCP connection using only its required server credentials. */
 export function makeMcpConfig(options: Options, env: NodeJS.ProcessEnv, database: string): unknown {
   if (options.transport === "http") {
@@ -237,21 +260,7 @@ export function makeMcpConfig(options: Options, env: NodeJS.ProcessEnv, database
       },
     };
   }
-  const keys = [
-    "OPENAI_API_KEY",
-    "OPENROUTER_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "EXA_API_KEY",
-    "PERPLEXITY_API_KEY",
-    "GOOGLE_CLOUD_PROJECT",
-    "GOOGLE_CLOUD_LOCATION",
-    "GOOGLE_APPLICATION_CREDENTIALS",
-    "TARGETS_JSON",
-    "OPENSENPAI_TARGETS_JSON",
-  ];
-  const serverEnv = Object.fromEntries(
-    keys.filter((key) => env[key]).map((key) => [key, env[key]]),
-  );
+  const serverEnv = serverEnvironment(env);
   return {
     mcpServers: {
       aeo: {
