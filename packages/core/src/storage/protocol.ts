@@ -8,6 +8,7 @@ export const RESEARCH_METHODS = [
   "initialize",
   "createRun",
   "getRun",
+  "getRunByIdempotencyKey",
   "getObservation",
   "listRuns",
   "listRunPage",

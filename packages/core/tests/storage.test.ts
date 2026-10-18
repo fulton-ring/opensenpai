@@ -82,7 +82,7 @@ afterEach(async () => {
 });
 
 describe("ResearchStore", () => {
-  it("isolates workspaces and conflicting canonical idempotency snapshots", async () => {
+  it("isolates workspaces and rejects changed caller input while preserving accepted target snapshots", async () => {
     const a = await store();
     const b = await store("other");
     const first = await a.createRun(input, [target], estimate);
@@ -92,9 +92,13 @@ describe("ResearchStore", () => {
     await expect(a.createRun({ ...input, locale: "fr" }, [target], estimate)).rejects.toMatchObject(
       { code: "IDEMPOTENCY_CONFLICT" },
     );
-    await expect(
-      a.createRun(input, [{ ...target, model: "changed" }], estimate),
-    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(await a.createRun(input, [{ ...target, model: "changed" }], estimate)).toMatchObject({
+      created: false,
+      run: { id: first.run.id },
+    });
+    expect((await a.getResults({ run_id: first.run.id })).observations[0]?.target.model).toBe(
+      target.model,
+    );
   });
   it("serializes create and claims across separate database clients", async () => {
     const a = await store();

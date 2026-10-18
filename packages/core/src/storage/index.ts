@@ -133,18 +133,19 @@ export class ResearchStore {
     ).join("");
     return this.transaction(async (tx) => {
       const existing = await tx.execute({
-        sql: "SELECT id,input_hash FROM app_runs WHERE workspace_id=? AND idempotency_key=?",
+        sql: "SELECT id FROM app_runs WHERE workspace_id=? AND idempotency_key=?",
         args: [this.workspaceId, input.idempotency_key],
       });
       const prior = existing.rows[0];
       if (prior) {
-        if (prior.input_hash !== inputHash)
-          throw new ResearchError(
-            "IDEMPOTENCY_CONFLICT",
-            "Idempotency key already has a different input or target snapshot",
-          );
         const run = await this.run(tx, String(prior.id));
         if (!run) throw new Error("Missing idempotent run");
+        // Compare stored caller input: legacy hashes also include mutable resolved targets.
+        if (canonical(run.input) !== canonical(input))
+          throw new ResearchError(
+            "IDEMPOTENCY_CONFLICT",
+            "Idempotency key already has a different input",
+          );
         return { run, created: false };
       }
       const run = newRun(input, estimate, this.workspaceId, this.now());
@@ -161,6 +162,16 @@ export class ResearchStore {
         });
       return { run, created: true };
     });
+  }
+
+  /** Find an accepted run within this workspace without resolving provider metadata again. */
+  async getRunByIdempotencyKey(key: string): Promise<RunRecord | null> {
+    const existing = await this.client.execute({
+      sql: "SELECT id FROM app_runs WHERE workspace_id=? AND idempotency_key=?",
+      args: [this.workspaceId, key],
+    });
+    const id = existing.rows[0]?.id;
+    return id === undefined ? null : this.getRun(String(id));
   }
 
   async getRun(id: string) {

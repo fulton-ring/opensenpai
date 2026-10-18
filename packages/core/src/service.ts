@@ -13,6 +13,7 @@ import {
 } from "./contracts.js";
 import { defaultProviders } from "./providers/index.js";
 import type { ProviderRegistry } from "./providers/types.js";
+import { canonical } from "./storage/records.js";
 import { estimateRun, targetAvailability } from "./targets.js";
 
 /** Optional provider catalog query; omitting it lists configured adapters without network requests. */
@@ -36,6 +37,7 @@ export interface ServiceStore {
     estimate: RunEstimate,
   ): Promise<{ run: RunRecord; created: boolean }>;
   getRun(id: string): Promise<RunRecord | null>;
+  getRunByIdempotencyKey(key: string): Promise<RunRecord | null>;
   listUnqueued(limit?: number, runId?: string): Promise<Observation[]>;
   listRuns(query?: RunPageQuery): Promise<RunRecord[]>;
   listRunPage(query?: RunPageQuery): Promise<{ runs: RunRecord[]; next_cursor: string | null }>;
@@ -192,6 +194,15 @@ export class ResearchService {
 
   private async createValidatedRun(value: unknown) {
     const input = runInputSchema.parse(value);
+    const prior = await this.options.store.getRunByIdempotencyKey(input.idempotency_key);
+    if (prior) {
+      if (canonical(prior.input) !== canonical(input))
+        throw new ResearchError(
+          "IDEMPOTENCY_CONFLICT",
+          "Idempotency key already has a different input",
+        );
+      return { run: prior, created: false };
+    }
     const targets = await this.selected(input);
     for (const target of targets) {
       const availability = targetAvailability(target, this.options.env, this.options.providers);

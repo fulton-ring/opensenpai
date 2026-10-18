@@ -58,6 +58,9 @@ function setup(env: Record<string, string | undefined> = { OPENROUTER_API_KEY: "
         ? [{ id: "observation-1", run_id: saved.id, status: "pending" } as Observation]
         : [];
     },
+    async getRunByIdempotencyKey(key) {
+      return saved?.input.idempotency_key === key ? saved : null;
+    },
     async getRun() {
       return saved ?? null;
     },
