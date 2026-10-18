@@ -13,9 +13,13 @@ import type {
 export { createOpenRouterProvider } from "./openrouter.js";
 export { ProviderResponseError } from "./outcomes.js";
 export { EXA_ESTIMATED_COST_PER_QUERY, EXA_SEARCH_ESTIMATE_USD, exaProvider } from "./retrieval.js";
+
 export type { SdkModel, SdkProviderOptions } from "./sdk.js";
 export { createOpenAICompatibleProvider, createSdkProvider } from "./sdk.js";
+
 export type * from "./types.js";
+
+/** Builds an immutable registry from operator-owned model and retrieval adapters. */
 export function createProviderRegistry(
   config: {
     models?: Record<string, ModelProvider>;
@@ -27,10 +31,14 @@ export function createProviderRegistry(
     retrievals: Object.freeze({ ...config.retrievals }),
   };
 }
+
+/** Bundled OpenRouter and Exa adapters; native search requires explicit operator configuration. */
 export const defaultProviders = createProviderRegistry({
   models: { openrouter: createOpenRouterProvider() },
   retrievals: { exa: exaProvider },
 });
+
+/** Checks adapter availability and dispatches one model operation without automatic retries. */
 export async function executeProvider(
   input: ProviderInput,
   env: ProviderEnvironment,
@@ -55,6 +63,8 @@ export async function executeProvider(
     );
   return provider.execute(input, context);
 }
+
+/** Dispatches controlled retrieval through the named registered search adapter. */
 export async function retrieveSearch(
   input: RetrievalInput,
   env: ProviderEnvironment,
@@ -72,6 +82,8 @@ export async function retrieveSearch(
     );
   return provider.retrieve(input, context);
 }
+
+/** Compatibility facade that defaults controlled retrieval to the Exa adapter. */
 export async function retrieveExa(
   input: Omit<RetrievalInput, "engine"> & { engine?: string },
   env: ProviderEnvironment,

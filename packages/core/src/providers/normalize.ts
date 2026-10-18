@@ -1,24 +1,42 @@
 import type { LanguageModelUsage } from "ai";
 import type { Citation, ProviderInput, ProviderResult, Source } from "../contracts.js";
+
+/** Untrusted provider object retained for response parsing and audit evidence. */
 export type Json = Record<string, unknown>;
+
+/** Returns an object-shaped provider value or an empty object for safe optional access. */
 export const obj = (value: unknown): Json =>
   value && typeof value === "object" ? (value as Json) : {};
+
+/** Returns a provider array or an empty array when the value has another shape. */
 export const arr = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+/** Converts array elements into object-shaped records without discarding their order. */
 export const records = (value: unknown): Json[] => arr(value).map(obj);
+
+/** Reads a finite numeric provider counter while preserving missing values as null. */
 export const num = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/** Reads a string provider field without coercing other values. */
 export const str = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
+
 const isUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value);
+
+/** Normalizes an HTTP source URL and retains the original source as metadata. */
 export function source(value: unknown): Source | null {
   const s = obj(value);
   const url = s.url ?? s.uri;
   return isUrl(url) ? { url, title: str(s.title), text: str(s.text), metadata: value } : null;
 }
+
+/** Keeps the first source for each URL while preserving retrieval order. */
 export function uniqueSources(values: Source[]): Source[] {
   return values.filter((s, i) => values.findIndex((v) => v.url === s.url) === i);
 }
+
 interface Evidence {
   sources: Source[];
   citations: Citation[];
@@ -26,6 +44,7 @@ interface Evidence {
   engine: string | null;
   executed: boolean;
 }
+
 const empty = (): Evidence => ({
   sources: [],
   citations: [],
@@ -33,6 +52,7 @@ const empty = (): Evidence => ({
   engine: null,
   executed: false,
 });
+
 function citation(value: unknown): Citation | null {
   const a = obj(value);
   const c = obj(a.url_citation ?? a);
@@ -48,12 +68,14 @@ function citation(value: unknown): Citation | null {
       }
     : null;
 }
+
 function annotations(values: unknown): Citation[] {
   return records(values)
     .filter((a) => a.type === "url_citation")
     .map(citation)
     .filter((c) => c !== null);
 }
+
 function responseEvidence(raw: Json): Evidence {
   const e = empty();
   for (const output of records(raw.output)) {
@@ -72,6 +94,7 @@ function responseEvidence(raw: Json): Evidence {
   }
   return e;
 }
+
 function evidence(input: ProviderInput, raw: Json): Evidence {
   const e = responseEvidence(raw);
   for (const choice of records(raw.choices))
@@ -91,16 +114,21 @@ function evidence(input: ProviderInput, raw: Json): Evidence {
   e.executed = e.searches !== null && e.searches > 0;
   return e;
 }
+
+/** SDK aggregate usage, sources and metadata accompanying exact captured wire responses. */
 export interface NormalizationContext {
   responses?: Json[];
   sdk_usage?: LanguageModelUsage;
   sdk_sources?: Source[];
+  sdk_metadata?: unknown;
 }
+
 function sumCounts(values: (number | null)[]): number | null {
   return values.some((v) => v === null)
     ? null
     : values.reduce<number>((sum, v) => sum + (v ?? 0), 0);
 }
+
 function combinedEvidence(input: ProviderInput, responses: Json[]): Evidence {
   const items = responses.map((raw) => evidence(input, raw));
   const engines = [...new Set(items.map((e) => e.engine).filter((e) => e !== null))];
@@ -112,6 +140,7 @@ function combinedEvidence(input: ProviderInput, responses: Json[]): Evidence {
     executed: items.some((e) => e.executed),
   };
 }
+
 function rawTokens(raw: Json) {
   const u = obj(raw.usage);
   return {
@@ -123,6 +152,7 @@ function rawTokens(raw: Json) {
     raw: u,
   };
 }
+
 function usage(
   input: ProviderInput,
   responses: Json[],
@@ -160,6 +190,7 @@ function usage(
         : { responses: tokens.map((t) => t.raw), sdk_aggregate: sdk ?? null },
   };
 }
+
 function searchActivity(input: ProviderInput, e: Evidence): ProviderResult["search_activity"] {
   if (input.target.search.mode === "controlled")
     return { requested: "controlled", observed: "executed", engine: input.target.search.engine };
@@ -174,6 +205,8 @@ function searchActivity(input: ProviderInput, e: Evidence): ProviderResult["sear
         : "not_observed";
   return { requested: input.target.search.mode, observed, engine: e.engine };
 }
+
+/** Combines exact responses and SDK evidence into one auditable provider result. */
 export function normalize(
   input: ProviderInput,
   raw: Json,
@@ -202,7 +235,12 @@ export function normalize(
     ],
     search_activity: searchActivity(input, e),
     usage: usage(input, responses, e.searches, context.sdk_usage),
-    raw_response: responses.length === 1 ? raw : { responses },
+    raw_response:
+      context.sdk_metadata !== undefined
+        ? { responses, sdk_metadata: context.sdk_metadata }
+        : responses.length === 1
+          ? raw
+          : { responses },
     warnings: [],
   };
 }

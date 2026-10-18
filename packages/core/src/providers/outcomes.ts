@@ -12,10 +12,12 @@ export class ProviderResponseError extends ResearchError {
     this.name = "ProviderResponseError";
   }
 }
+
 function hasRefusal(raw: Json): boolean {
   const content = records(raw.output).flatMap((o) => records(o.content));
   return content.some((c) => c.type === "refusal") || raw.stop_reason === "refusal";
 }
+
 function safetyBlocked(raw: Json, finish: string | null): boolean {
   const reasons = [
     finish,
@@ -29,6 +31,7 @@ function safetyBlocked(raw: Json, finish: string | null): boolean {
       ["content-filter", "content_filter", "SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT"].includes(r),
   );
 }
+
 function rejectStatus(raw: Json, result: ProviderResult): void {
   const status = str(raw.status);
   if (status === "cancelled")
@@ -46,6 +49,8 @@ function rejectStatus(raw: Json, result: ProviderResult): void {
       result,
     );
 }
+
+/** Normalizes a completed SDK response and rejects terminal provider failures with retained usage. */
 export function validateOutcome(
   input: ProviderInput,
   raw: Json,
@@ -73,6 +78,8 @@ export function validateOutcome(
     );
   return result;
 }
+
+/** Recovers terminal provider failures from wire responses when the SDK itself throws. */
 export function validateCapturedFailure(
   input: ProviderInput,
   raw: Json,

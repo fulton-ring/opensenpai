@@ -1,5 +1,6 @@
+import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { expect, it } from "vitest";
-import { type ProviderInput, targetSchema } from "../../src/contracts.js";
+import { type ProviderInput, ResearchError, targetSchema } from "../../src/contracts.js";
 import {
   createOpenAICompatibleProvider,
   createProviderRegistry,
@@ -7,6 +8,7 @@ import {
   executeProvider,
   retrieveSearch,
 } from "../../src/providers/index.js";
+import { ProviderResponseError } from "../../src/providers/outcomes.js";
 
 function input(): ProviderInput {
   return {
@@ -92,7 +94,8 @@ it("normalizes a Mastra-compatible custom SDK model using standard SDK usage and
             outputTokens: { total: 3, text: 3, reasoning: 0 },
           },
           warnings: [],
-          response: { id: "sdk-1", modelId: "custom-model" },
+          response: { id: "sdk-1", modelId: "custom-model", body: { custom_evidence: true } },
+          providerMetadata: { custom: { trace: "sdk-proof" } },
         }),
         doStream: async () => {
           throw new Error("unused");
@@ -106,6 +109,13 @@ it("normalizes a Mastra-compatible custom SDK model using standard SDK usage and
     { providers: createProviderRegistry({ models: { competitor: provider } }) },
   );
   expect(result.response_id).toBe("sdk-1");
+  expect(result.raw_response).toMatchObject({
+    sdk_metadata: {
+      provider_metadata: { custom: { trace: "sdk-proof" } },
+      response: { body: { custom_evidence: true } },
+      usage: { inputTokens: 7, outputTokens: 3 },
+    },
+  });
   expect(result.answer).toBe("SDK answer");
   expect(result.usage).toMatchObject({ input_tokens: 7, output_tokens: 3 });
   expect(result.sources).toMatchObject([{ url: "https://source.test" }]);
@@ -196,5 +206,196 @@ it("retains terminal provider errors and counters without copying private messag
     code: "provider_failed",
     message: "Provider reported generation failure",
     result: { usage: { input_tokens: 7, output_tokens: 2, reported_cost_usd: 0.02 } },
+  });
+});
+it("retains SDK result charges when an asynchronous custom verifier throws", async () => {
+  const providers = createProviderRegistry({
+    models: {
+      competitor: createSdkProvider({
+        createModel: (_input, context) => ({
+          model: createOpenAICompatible({
+            name: "custom",
+            baseURL: "https://gateway.test/v1",
+            apiKey: "test",
+            fetch: context.fetch,
+          })("custom-model"),
+        }),
+        verify: async () => {
+          await Promise.resolve();
+          throw new Error("PRIVATE VERIFIER DETAIL");
+        },
+      }),
+    },
+  });
+  await expect(
+    executeProvider(
+      input(),
+      {},
+      {
+        providers,
+        fetch: async () =>
+          response({
+            id: "paid",
+            model: "custom-model",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "Paid answer" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11, cost: 0.02 },
+          }),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "verification_failed",
+    message: "Provider result verification failed",
+    result: { answer: "Paid answer", usage: { reported_cost_usd: 0.02, input_tokens: 8 } },
+  });
+});
+it("preserves an explicit typed verifier failure without wrapping its code", async () => {
+  const providers = createProviderRegistry({
+    models: {
+      competitor: createSdkProvider({
+        createModel: (_input, context) => ({
+          model: createOpenAICompatible({
+            name: "custom",
+            baseURL: "https://gateway.test/v1",
+            apiKey: "test",
+            fetch: context.fetch,
+          })("custom-model"),
+        }),
+        verify: async (result) => {
+          throw new ProviderResponseError(
+            "custom_search_proof_failed",
+            "Search unavailable",
+            result,
+          );
+        },
+      }),
+    },
+  });
+  await expect(
+    executeProvider(
+      input(),
+      {},
+      {
+        providers,
+        fetch: async () =>
+          response({
+            id: "paid",
+            model: "custom-model",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "Paid answer" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11, cost: 0.02 },
+          }),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "custom_search_proof_failed",
+    result: { usage: { reported_cost_usd: 0.02 } },
+  });
+});
+it("classifies model-factory errors as undispatched only before any HTTP operation", async () => {
+  let calls = 0;
+  const providers = createProviderRegistry({
+    models: {
+      competitor: createSdkProvider({
+        createModel: () => {
+          throw new Error("PRIVATE SETUP DETAIL");
+        },
+      }),
+    },
+  });
+  await expect(
+    executeProvider(
+      input(),
+      {},
+      {
+        providers,
+        fetch: async () => {
+          calls++;
+          return response({});
+        },
+      },
+    ),
+  ).rejects.toMatchObject({ code: "provider_not_dispatched" });
+  expect(calls).toBe(0);
+});
+it("preserves captured costs when a custom factory performs HTTP and then fails", async () => {
+  const providers = createProviderRegistry({
+    models: {
+      competitor: createSdkProvider({
+        createModel: async (_input, context) => {
+          await context.fetch("https://gateway.test/v1/custom");
+          throw new Error("PRIVATE DETAIL");
+        },
+      }),
+    },
+  });
+  await expect(
+    executeProvider(
+      input(),
+      {},
+      {
+        providers,
+        fetch: async () =>
+          response({ id: "paid", usage: { prompt_tokens: 8, completion_tokens: 3, cost: 0.02 } }),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "provider_setup_failed",
+    result: { usage: { reported_cost_usd: 0.02 } },
+  });
+});
+
+it("keeps a post-generation undispatched error from releasing paid reservations", async () => {
+  const providers = createProviderRegistry({
+    models: {
+      competitor: createSdkProvider({
+        createModel: (_input, context) => ({
+          model: createOpenAICompatible({
+            name: "custom",
+            baseURL: "https://gateway.test/v1",
+            apiKey: "test",
+            fetch: context.fetch,
+          })("custom-model"),
+        }),
+        verify: async () => {
+          throw new ResearchError("provider_not_dispatched", "Late plugin rejection");
+        },
+      }),
+    },
+  });
+  await expect(
+    executeProvider(
+      input(),
+      {},
+      {
+        providers,
+        fetch: async () =>
+          response({
+            id: "paid",
+            model: "custom-model",
+            choices: [
+              {
+                index: 0,
+                message: { role: "assistant", content: "Paid answer" },
+                finish_reason: "stop",
+              },
+            ],
+            usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11, cost: 0.02 },
+          }),
+      },
+    ),
+  ).rejects.toMatchObject({
+    code: "verification_failed",
+    result: { usage: { reported_cost_usd: 0.02 } },
   });
 });

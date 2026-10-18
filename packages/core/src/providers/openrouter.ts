@@ -14,19 +14,25 @@ interface RouterOptions {
   apiKeyEnv?: string;
   nativeSearch?: { apiKeyEnv: string; policy: "workspace-native-only" };
 }
+
 interface Endpoint {
   tag: string;
   providerName: string;
 }
+
 const root = "https://openrouter.ai/api/v1";
+
 const searchEnabled = (target: Target) =>
   target.search.mode === "native" || target.search.mode === "server";
+
 const sonar = (target: Target) => target.model.startsWith("perplexity/sonar");
+
 function apiKeyEnv(options: RouterOptions, target: Target) {
   return target.search.mode === "native"
     ? options.nativeSearch?.apiKeyEnv
     : (options.apiKeyEnv ?? "OPENROUTER_API_KEY");
 }
+
 function availability(options: RouterOptions, target: Target, context: ProviderContext) {
   if (target.search.mode === "native" && options.nativeSearch?.policy !== "workspace-native-only")
     return {
@@ -53,6 +59,7 @@ function availability(options: RouterOptions, target: Target, context: ProviderC
     return { available: false, reason: "Unsupported OpenRouter server search engine" };
   return { available: true };
 }
+
 function eligible(target: Target, value: Record<string, unknown>) {
   if (!str(value.tag)?.trim() || !str(value.provider_name)?.trim()) return false;
   if (value.status !== undefined && value.status !== 0) return false;
@@ -62,6 +69,7 @@ function eligible(target: Target, value: Record<string, unknown>) {
     (sonar(target) && value.tag === "perplexity")
   );
 }
+
 async function catalogEndpoint(
   target: Target,
   context: ProviderContext,
@@ -84,6 +92,7 @@ async function catalogEndpoint(
     throw new Error("endpoint unavailable");
   return selected;
 }
+
 async function endpoint(
   input: ProviderInput,
   context: ProviderContext,
@@ -99,6 +108,7 @@ async function endpoint(
     );
   }
 }
+
 function amount(value: unknown): number | undefined {
   if (
     (typeof value !== "number" && typeof value !== "string") ||
@@ -108,6 +118,7 @@ function amount(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 }
+
 function pricing(target: Target, selected: Record<string, unknown>): Target["pricing"] {
   const values = obj(selected.pricing);
   const prompt = amount(values.prompt),
@@ -132,6 +143,7 @@ function pricing(target: Target, selected: Record<string, unknown>): Target["pri
   if (!Number.isFinite(input) || !Number.isFinite(output)) return undefined;
   return { input_per_million: input, output_per_million: output, search_per_request: search };
 }
+
 async function resolveTarget(
   options: RouterOptions,
   target: Target,
@@ -155,6 +167,7 @@ async function resolveTarget(
     );
   }
 }
+
 async function listModels(query: { query?: string; limit: number }, context: ProviderContext) {
   if (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 50)
     throw new ResearchError("invalid_model_query", "Model query limit must be between 1 and 50");
@@ -182,6 +195,7 @@ async function listModels(query: { query?: string; limit: number }, context: Pro
     );
   }
 }
+
 function requestBody(input: ProviderInput, selected: Endpoint | null) {
   const search = input.target.search;
   return {
@@ -211,6 +225,7 @@ function requestBody(input: ProviderInput, selected: Endpoint | null) {
       : {}),
   };
 }
+
 async function metadata(
   responseId: string | null,
   context: ProviderContext,
@@ -234,6 +249,7 @@ async function metadata(
   }
   return null;
 }
+
 async function generationMetadata(
   result: ProviderResult,
   context: ProviderContext,
@@ -252,6 +268,7 @@ async function generationMetadata(
   }
   return items;
 }
+
 async function verify(
   result: ProviderResult,
   input: ProviderInput,
@@ -288,6 +305,8 @@ async function verify(
   result.search_activity.observed = "executed";
   return result;
 }
+
+/** Creates a catalog-resolved OpenRouter adapter that pins endpoints and verifies requested search execution. */
 export function createOpenRouterProvider(options: RouterOptions = {}): ModelProvider {
   return {
     availability: (target, context) => availability(options, target, context),

@@ -2,7 +2,10 @@ import { ResearchError, type RetrievalBundle, type Source } from "../contracts.j
 import { type Json, num, obj, records, source } from "./normalize.js";
 import type { ProviderEnvironment, RetrievalInput, RetrievalProvider } from "./types.js";
 
+/** Conservative USD reservation for one direct Exa query; reported charges remain authoritative. */
 export const EXA_ESTIMATED_COST_PER_QUERY = 0.02;
+
+/** Compatibility alias for the direct Exa query reservation amount. */
 export const EXA_SEARCH_ESTIMATE_USD = EXA_ESTIMATED_COST_PER_QUERY;
 
 async function http(
@@ -30,6 +33,7 @@ async function http(
     );
   return obj(await response.json());
 }
+
 function checkRetrieval(input: RetrievalInput, env: ProviderEnvironment) {
   const validQueries =
     input.queries.length >= 1 &&
@@ -46,6 +50,7 @@ function checkRetrieval(input: RetrievalInput, env: ProviderEnvironment) {
   if (!env.EXA_API_KEY?.trim())
     throw new ResearchError("missing_credentials", "Missing EXA_API_KEY");
 }
+
 async function retrieveExa(
   input: RetrievalInput,
   env: ProviderEnvironment,
@@ -95,6 +100,7 @@ async function retrieveExa(
   };
 }
 
+/** Direct Exa retrieval adapter preserving exact results, ordered sources and reported query costs. */
 export const exaProvider: RetrievalProvider = {
   availability: ({ env }) => ({
     available: Boolean(env.EXA_API_KEY?.trim()),
