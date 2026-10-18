@@ -10,6 +10,7 @@ async function directory() {
   directories.push(path);
   return path;
 }
+
 async function moduleFile(path: string, source: string, name = "opensenpai.config.mjs") {
   await writeFile(join(path, name), source);
   return join(path, name);
@@ -49,7 +50,7 @@ describe("trusted local provider configuration", () => {
   it("uses built-ins only when the implicit conventional module is absent", async () => {
     const path = await directory();
     const config = await loadProviderConfiguration({}, {}, path);
-    expect(config.targets.length).toBeGreaterThan(0);
+    expect(config.targets).toEqual([]);
     expect(config.providers.models.openrouter).toBeDefined();
     expect(config.configPath).toBeUndefined();
     await expect(
@@ -73,12 +74,29 @@ describe("trusted local provider configuration", () => {
     expect(config.targets[0]?.id).toBe(target.id);
     expect(config.providers).toBe(providers);
   });
+  it("accepts empty presets because models can be selected through MCP", async () => {
+    const path = await directory();
+    await moduleFile(path, "export default { targets: [] }");
+    expect((await loadProviderConfiguration({}, {}, path)).targets).toEqual([]);
+  });
+  it.each(["resolveTarget", "listModels"])(
+    "rejects a non-function optional model hook: %s",
+    async (method) => {
+      const path = await directory();
+      await moduleFile(
+        path,
+        `export default { providers: { models: { custom: { availability() {}, execute() {}, ${method}: true } }, retrievals: {} } }`,
+      );
+      await expect(loadProviderConfiguration({}, {}, path)).rejects.toMatchObject({
+        code: "INVALID_CONFIG",
+      });
+    },
+  );
   it.each([
     "export default { unknown: true }",
     "export default () => ({})",
     "export default { providers: { models: { custom: {} }, retrievals: {} } }",
     "export default { providers: { models: {}, retrievals: { custom: { retrieve() {} } } } }",
-    "export default { targets: [] }",
     "export default { targets: null }",
     "export default { providers: { models: { 'invalid id': {} }, retrievals: {} } }",
     "throw new Error('SECRET_FROM_MODULE')",
@@ -92,7 +110,7 @@ describe("trusted local provider configuration", () => {
   });
   it("rejects invalid module targets even when environment targets override them", async () => {
     const path = await directory();
-    await moduleFile(path, "export default { targets: [] }");
+    await moduleFile(path, "export default { targets: [{ id: 42 }] }");
     await expect(
       loadProviderConfiguration({ TARGETS_JSON: JSON.stringify([target]) }, {}, path),
     ).rejects.toMatchObject({ code: "INVALID_CONFIG" });

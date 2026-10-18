@@ -1,6 +1,7 @@
 import { ResearchError } from "@opensenpai/core/contracts";
 import { z } from "zod";
 
+/** Operator-controlled process settings; explicit values override environment defaults. */
 export interface ApplicationOptions {
   role?: "all" | "api" | "worker";
   transport?: "http" | "stdio";
@@ -11,6 +12,7 @@ export interface ApplicationOptions {
   configPath?: string;
   listen?: boolean;
 }
+/** Validate process roles, storage, transport, and authentication before opening resources. */
 export function loadConfig(
   env: Record<string, string | undefined>,
   options: ApplicationOptions = {},

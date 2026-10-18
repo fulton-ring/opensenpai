@@ -19,6 +19,7 @@ import { createHttpServer } from "./http.js";
 import { createResearchMcp } from "./mcp.js";
 import { loadProviderConfiguration } from "./provider-config.js";
 
+/** Application startup settings, provider hooks, and injectable storage dependencies. */
 export type CreateApplicationOptions = ApplicationOptions &
   Pick<
     RuntimeOptions,
@@ -38,6 +39,7 @@ async function ensureParent(url: string) {
   await mkdir(dirname(resolve(path)), { recursive: true });
 }
 
+/** Compose durable research storage, the Mastra runtime, and the configured MCP transport. */
 export async function createApplication(
   env: Record<string, string | undefined>,
   options: CreateApplicationOptions = {},

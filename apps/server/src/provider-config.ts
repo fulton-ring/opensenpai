@@ -5,6 +5,7 @@ import { ResearchError } from "@opensenpai/core/contracts";
 import { defaultProviders, type ProviderRegistry } from "@opensenpai/core/providers";
 import { loadTargets } from "@opensenpai/core/targets";
 
+/** Select a trusted local module or explicitly override its provider registry and presets. */
 export interface ProviderConfigurationOptions {
   configPath?: string;
   targets?: unknown;
@@ -17,27 +18,34 @@ function invalidConfig(): never {
     "Provider configuration must be a trusted local .js/.mjs module exporting valid targets and providers.",
   );
 }
+
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
+
 function registry(value: unknown): ProviderRegistry {
   if (!object(value) || Object.keys(value).some((key) => !["models", "retrievals"].includes(key)))
     return invalidConfig();
-  validateEntries(value.models, ["availability", "execute"]);
+  validateEntries(value.models, ["availability", "execute"], ["resolveTarget", "listModels"]);
   validateEntries(value.retrievals, ["availability", "estimate", "retrieve"]);
   return value as unknown as ProviderRegistry;
 }
-function validateEntries(value: unknown, methods: string[]) {
+
+function validateEntries(value: unknown, methods: string[], optionalMethods: string[] = []) {
   if (!object(value)) return invalidConfig();
   for (const [id, entry] of Object.entries(value)) {
     if (
       !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(id) ||
       !object(entry) ||
-      methods.some((method) => typeof entry[method] !== "function")
+      methods.some((method) => typeof entry[method] !== "function") ||
+      optionalMethods.some(
+        (method) => entry[method] !== undefined && typeof entry[method] !== "function",
+      )
     )
       return invalidConfig();
   }
 }
+
 async function configurationModule(path: string, explicit: boolean) {
   if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(path) || ![".js", ".mjs"].includes(extname(path)))
     return invalidConfig();
@@ -62,6 +70,7 @@ async function configurationModule(path: string, explicit: boolean) {
   }
 }
 
+/** Load operator-owned ESM configuration, validate its shape, and resolve override precedence. */
 export async function loadProviderConfiguration(
   env: Record<string, string | undefined>,
   options: ProviderConfigurationOptions = {},

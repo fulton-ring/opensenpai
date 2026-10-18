@@ -5,6 +5,7 @@ import type { Observation } from "@opensenpai/core/contracts";
 import type { ServiceStore } from "@opensenpai/core/service";
 import { publicError } from "./mcp.js";
 
+/** Dependencies and access policies for MCP, health, and internal observation HTTP routes. */
 export interface HttpOptions {
   mcp?: Pick<MCPServer, "startHTTP">;
   store: Pick<ServiceStore, "getRun" | "getResults"> & {
@@ -22,6 +23,7 @@ export interface HttpOptions {
   allowedHosts?: string[];
   allowedOrigins?: string[];
 }
+
 function authorized(req: IncomingMessage, token: string | undefined) {
   if (!token) return false;
   const supplied = req.headers.authorization ?? "";
@@ -30,6 +32,7 @@ function authorized(req: IncomingMessage, token: string | undefined) {
     createHash("sha256").update(`Bearer ${token}`).digest(),
   );
 }
+
 function json(res: ServerResponse, status: number, value: unknown) {
   if (res.headersSent || res.destroyed) return;
   res.writeHead(status, {
@@ -42,6 +45,7 @@ function json(res: ServerResponse, status: number, value: unknown) {
 const terminal = new Set(["succeeded", "failed", "cancelled", "unknown_outcome"]);
 const MAX_BODY = 1_048_576;
 
+/** Create a bounded HTTP server with separate MCP and internal execution credentials. */
 export function createHttpServer(options: HttpOptions) {
   if (options.internalToken && options.internalToken === options.mcpToken)
     throw new Error("INTERNAL_EXECUTION_TOKEN must differ from MCP_AUTH_TOKEN.");

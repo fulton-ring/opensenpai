@@ -60,7 +60,7 @@ describe("application composition", () => {
           {},
           { observe: noopObserve },
         );
-        expect(JSON.stringify(targetList)).toContain("openai-native");
+        expect(targetList).toMatchObject({ targets: [], model_providers: ["openrouter"] });
       } finally {
         await client.disconnect();
       }

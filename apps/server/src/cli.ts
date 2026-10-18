@@ -18,6 +18,7 @@ HTTP requires MCP_AUTH_TOKEN with at least 16 characters.
 Workers and external queues require a distinct INTERNAL_EXECUTION_TOKEN.
 `;
 
+/** Start the configured process and register graceful signal and stdio shutdown handlers. */
 export async function main(
   argv = process.argv.slice(2),
   env: Record<string, string | undefined> = process.env,

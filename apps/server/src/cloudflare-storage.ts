@@ -54,6 +54,7 @@ async function request<T>(bridgeFetch: BridgeFetch, endpoint: string, body: unkn
   return payload.result as T;
 }
 
+/** Proxy research methods through the private Container bridge without owning database lifetime. */
 export function createCloudflareResearchStorage(
   workspaceId: string,
   bridgeFetch: BridgeFetch = fetch,
@@ -72,6 +73,7 @@ export function createCloudflareResearchStorage(
   } as ResearchStorage;
 }
 
+/** Connect Mastra’s native D1 store to the private Cloudflare binding bridge. */
 export function createCloudflareD1Storage(workspaceId: string, bridgeFetch: BridgeFetch = fetch) {
   return new D1Store({
     id: `opensenpai-${workspaceId}`,
