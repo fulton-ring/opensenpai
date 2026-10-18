@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { isDeepStrictEqual } from "node:util";
 import {
   type Observation,
   ResearchError,
@@ -8,10 +9,17 @@ import {
   type RunRecord,
   runInputSchema,
   type Target,
+  targetSchema,
 } from "./contracts.js";
+import { defaultProviders } from "./providers/index.js";
 import type { ProviderRegistry } from "./providers/types.js";
 import { estimateRun, targetAvailability } from "./targets.js";
 
+export interface TargetDiscoveryQuery {
+  provider?: string;
+  model_query?: string;
+  limit?: number;
+}
 export interface RunPageQuery {
   project?: string;
   limit?: number;
@@ -51,22 +59,98 @@ const terminal = (run: RunRecord) => !["queued", "running"].includes(run.status)
 export class ResearchService {
   constructor(readonly options: ServiceOptions) {}
 
-  private selected(input: RunInput): Target[] {
-    return input.targets.map((id) => {
-      const target = this.options.targets.find((item) => item.id === id);
+  private modelProvider(id: string) {
+    const providers = this.options.providers ?? defaultProviders;
+    const provider = Object.hasOwn(providers.models, id) ? providers.models[id] : undefined;
+    if (!provider)
+      throw new ResearchError(
+        "UNKNOWN_MODEL_PROVIDER",
+        `Unknown model provider '${id}'. Call list_targets to discover providers.`,
+      );
+    return provider;
+  }
+
+  private async selected(input: RunInput): Promise<Target[]> {
+    const selected = input.targets.map((selection) => {
+      if (typeof selection !== "string") {
+        const { provider, serving_provider, ...value } = selection;
+        const adapter = this.modelProvider(provider);
+        const target = targetSchema.parse({
+          ...value,
+          transport: provider,
+          ...(serving_provider ? { provider_options: { provider: serving_provider } } : {}),
+        });
+        return { target, adapter };
+      }
+      const target = this.options.targets.find((item) => item.id === selection);
       if (!target)
         throw new ResearchError(
           "UNKNOWN_TARGET",
-          `Unknown target '${id}'. Call list_targets for configured target IDs.`,
+          `Unknown target '${selection}'. Call list_targets for configured target IDs, or supply an inline model and search selection.`,
         );
-      return target;
+      return { target, adapter: undefined };
     });
+    return Promise.all(
+      selected.map(async ({ target, adapter }) => {
+        if (!adapter?.resolveTarget) return target;
+        const resolved = targetSchema.parse(
+          await adapter.resolveTarget(structuredClone(target), { env: this.options.env, fetch }),
+        );
+        if (
+          resolved.id !== target.id ||
+          resolved.transport !== target.transport ||
+          resolved.model !== target.model ||
+          !isDeepStrictEqual(resolved.search, target.search)
+        )
+          throw new ResearchError(
+            "INVALID_TARGET_RESOLUTION",
+            "Model metadata resolver changed the requested target identity or search selection",
+          );
+        return resolved;
+      }),
+    );
   }
 
-  async listTargets() {
-    await this.options.store.recordToolCall("list_targets");
-    const observed = await this.observedCapabilities();
+  private async discoverModels(query: TargetDiscoveryQuery) {
+    if (query.provider === undefined && query.model_query === undefined) return {};
+    const providers = this.options.providers ?? defaultProviders;
+    const id =
+      query.provider ?? (Object.hasOwn(providers.models, "openrouter") ? "openrouter" : undefined);
+    if (!id)
+      throw new ResearchError(
+        "MODEL_PROVIDER_REQUIRED",
+        "Select a model provider to search its model catalog",
+      );
+    const provider = this.modelProvider(id);
+    if (!provider.listModels)
+      throw new ResearchError(
+        "MODEL_DISCOVERY_UNAVAILABLE",
+        `Provider '${id}' does not expose a model catalog`,
+      );
+    const limit = query.limit ?? 20;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+      throw new ResearchError(
+        "INVALID_DISCOVERY_QUERY",
+        "Model discovery limit must be between 1 and 100",
+      );
     return {
+      model_provider: id,
+      models: await provider.listModels(
+        { query: query.model_query, limit },
+        { env: this.options.env, fetch },
+      ),
+    };
+  }
+
+  async listTargets(query: TargetDiscoveryQuery = {}) {
+    await this.options.store.recordToolCall("list_targets");
+    const models = await this.discoverModels(query);
+    const observed = await this.observedCapabilities();
+    const providers = this.options.providers ?? defaultProviders;
+    return {
+      model_providers: Object.keys(providers.models),
+      retrieval_providers: Object.keys(providers.retrievals),
+      ...models,
       observed_sample_scope: "last_10_runs",
       targets: this.options.targets.map((target) => ({
         ...target,
@@ -79,7 +163,7 @@ export class ResearchService {
   async estimateRun(value: unknown) {
     await this.options.store.recordToolCall("estimate_run");
     const input = runInputSchema.parse(value);
-    return estimateRun(input, this.selected(input), this.options.providers);
+    return estimateRun(input, await this.selected(input), this.options.providers);
   }
 
   async startRun(value: unknown) {
@@ -97,7 +181,7 @@ export class ResearchService {
 
   private async createValidatedRun(value: unknown) {
     const input = runInputSchema.parse(value);
-    const targets = this.selected(input);
+    const targets = await this.selected(input);
     for (const target of targets) {
       const availability = targetAvailability(target, this.options.env, this.options.providers);
       if (!availability.available)

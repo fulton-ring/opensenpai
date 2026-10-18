@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { LibSQLStore } from "@mastra/libsql";
 import { afterEach, expect, it } from "vitest";
@@ -42,7 +45,11 @@ afterEach(async () => {
   for (const close of cleanup.splice(0)) await close();
 });
 async function fixture() {
-  const store = new ResearchStore(createClient({ url: ":memory:" }), "plugins");
+  const directory = await mkdtemp(join(tmpdir(), "provider-plugins-"));
+  const store = new ResearchStore(
+    createClient({ url: `file:${join(directory, "research.db")}` }),
+    "plugins",
+  );
   await store.initialize();
   const authorized: SpendAuthorization[] = [];
   const settled: { operation?: string; outcome: string; usage: Usage | null }[] = [];
@@ -123,6 +130,7 @@ async function fixture() {
   cleanup.push(async () => {
     await runtime.stop();
     await store.close();
+    await rm(directory, { recursive: true, force: true });
   });
   return { store, runtime, service, providers, authorized, settled, searchInputs, modelInputs };
 }
@@ -139,6 +147,9 @@ it("uses one registry for custom model availability, search estimation, durable 
   const { run } = await f.service.startRun(input);
   const pending = await f.store.listPending();
   await Promise.all(pending.map(({ id }) => f.runtime.executeObservation(id)));
+  expect(
+    (await f.store.getResults({ run_id: run.id })).observations.map(({ error }) => error),
+  ).toEqual([null, null]);
   expect((await f.service.getRun({ run_id: run.id, wait_ms: 0 })).status).toBe("succeeded");
   expect(f.searchInputs).toHaveLength(1);
   expect(f.searchInputs[0]).toMatchObject({
