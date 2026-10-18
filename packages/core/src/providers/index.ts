@@ -11,7 +11,7 @@ import type {
 } from "./types.js";
 
 export { createOpenRouterProvider } from "./openrouter.js";
-export { ProviderResponseError } from "./outcomes.js";
+export { ProviderResponseError, RetrievalResponseError } from "./outcomes.js";
 export { EXA_ESTIMATED_COST_PER_QUERY, EXA_SEARCH_ESTIMATE_USD, exaProvider } from "./retrieval.js";
 
 export type { SdkModel, SdkProviderOptions } from "./sdk.js";

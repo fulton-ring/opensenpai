@@ -1,4 +1,9 @@
-import { type ProviderInput, type ProviderResult, ResearchError } from "../contracts.js";
+import {
+  type ProviderInput,
+  type ProviderResult,
+  ResearchError,
+  type RetrievalBundle,
+} from "../contracts.js";
 import { type Json, type NormalizationContext, normalize, obj, records, str } from "./normalize.js";
 
 /** A terminal provider outcome whose usage and exact response remain available to settlement. */
@@ -10,6 +15,19 @@ export class ProviderResponseError extends ResearchError {
   ) {
     super(code, message);
     this.name = "ProviderResponseError";
+  }
+}
+
+/** Partial retrieval evidence; unknown charges retain the full reservation despite completed-query costs. */
+export class RetrievalResponseError extends ResearchError {
+  constructor(
+    code: string,
+    message: string,
+    public bundle: RetrievalBundle,
+    public unknown: boolean,
+  ) {
+    super(code, message);
+    this.name = "RetrievalResponseError";
   }
 }
 
