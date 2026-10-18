@@ -97,4 +97,4 @@ An accepted observation is persisted before dispatch. The Worker sends only `{ "
 
 The private `http://cloudflare-storage` outbound host gives the container access to workspace-scoped research methods and D1 queries. Public ingress never routes these handlers, and no Cloudflare account API token enters the container. The research adapter preserves the existing interactive transaction boundaries using Cloudflare storage transactions. See [the persistence design](../docs/cloudflare-storage.md).
 
-The container may sleep after five idle minutes; Cloudflare storage preserves state across restarts. Cold starts can delay readiness. No live Cloudflare deployment or paid provider call is part of the local compatibility tests.
+The container may sleep after five idle minutes; Cloudflare storage preserves state across restarts. The repair Cron recovers expired leases and checks pending dispatch/settlement records directly in Durable Object storage, waking the Node container only when repair work exists. Cold starts can delay readiness. No live Cloudflare deployment or paid provider call is part of the local compatibility tests.

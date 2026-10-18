@@ -44,6 +44,19 @@ export class OpenSenpaiContainer extends Container<Environment> {
   researchRpc(body: unknown) {
     return this.research(body);
   }
+
+  /** Inspect durable repair work without starting the Node process. */
+  async needsRepair(): Promise<boolean> {
+    const recovered = await this.researchRpc({ method: "recoverExpired", args: [] });
+    if ("error" in recovered) throw new Error("Durable lease recovery failed");
+    for (const method of ["listUnqueued", "listPendingSettlements"] as const) {
+      const pending = await this.researchRpc({ method, args: [1] });
+      if ("error" in pending || !Array.isArray(pending.result))
+        throw new Error("Durable repair lookup failed");
+      if (pending.result.length) return true;
+    }
+    return false;
+  }
 }
 
 OpenSenpaiContainer.outboundByHost = { "cloudflare-storage": handlePrivateStorage };
@@ -61,7 +74,8 @@ export default {
     return consumeObservations(batch, environment(env));
   },
   // Repairs dispatch of already accepted jobs only. It never starts scheduled research.
-  scheduled(_controller: ScheduledController, env: Environment): Promise<void> {
-    return dispatchOutbox(environment(env));
+  async scheduled(_controller: ScheduledController, env: Environment): Promise<void> {
+    const deployment = environment(env);
+    if (await deployment.APPLICATION.needsRepair()) await dispatchOutbox(deployment);
   },
 };

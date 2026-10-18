@@ -11,7 +11,8 @@ vi.mock("@cloudflare/containers", () => ({
   getContainer: vi.fn(),
 }));
 
-import { ContainerProxy, OpenSenpaiContainer } from "../src/worker.js";
+import { getContainer } from "@cloudflare/containers";
+import worker, { ContainerProxy, OpenSenpaiContainer } from "../src/worker.js";
 
 function container() {
   const queries: { sql: string; args: unknown[] }[] = [];
@@ -65,4 +66,41 @@ describe("owning Container Durable Object storage", () => {
       ["trusted-workspace", "run-2"],
     ]);
   });
+});
+
+describe("scheduled repair", () => {
+  it.each(["idle", "unqueued", "settlement", "storage failure"])(
+    "checks durable state before waking the Node container: %s",
+    async (state) => {
+      const fetcher = vi.fn(async () => Response.json({ observations: [] }));
+      const application = container().application;
+      const researchRpc = vi.spyOn(application, "researchRpc").mockImplementation(async (body) => {
+        const { method } = body as { method: string };
+        if (state === "storage failure")
+          return {
+            error: { code: "STORAGE_ERROR", message: "storage unavailable", retryable: false },
+          };
+        if (method === "recoverExpired") return { result: 0 };
+        return {
+          result:
+            (state === "unqueued" && method === "listUnqueued") ||
+            (state === "settlement" && method === "listPendingSettlements")
+              ? [{ id: "pending-1" }]
+              : [],
+        };
+      });
+      vi.mocked(getContainer).mockReturnValue({
+        fetch: fetcher,
+        needsRepair: () => application.needsRepair(),
+      } as unknown as ReturnType<typeof getContainer>);
+      const operation = worker.scheduled(
+        {} as ScheduledController,
+        { INTERNAL_EXECUTION_TOKEN: "internal-secret" } as Parameters<typeof worker.scheduled>[1],
+      );
+      if (state === "storage failure") await expect(operation).rejects.toThrow();
+      else await operation;
+      expect(researchRpc).toHaveBeenCalled();
+      expect(fetcher).toHaveBeenCalledTimes(state === "unqueued" || state === "settlement" ? 1 : 0);
+    },
+  );
 });
