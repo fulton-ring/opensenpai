@@ -7,7 +7,7 @@ import {
   type RetrievalBundle,
   type SpendAuthorization,
 } from "../contracts.js";
-import { EXA_ESTIMATED_COST_PER_QUERY } from "../targets.js";
+import { retrievalEstimate } from "../targets.js";
 import { Concurrency, concurrencyLimit } from "./concurrency.js";
 import {
   authorizeSpend,
@@ -15,6 +15,7 @@ import {
   retrievalAuthorization,
   retrievalUsage,
   settleSpend,
+  undispatchedUsage,
 } from "./spend.js";
 import type { RuntimeOptions } from "./types.js";
 
@@ -24,6 +25,7 @@ const safeBeforeDispatch = new Set([
   "missing_retrieval",
   "invalid_retrieval",
   "unsupported_configuration",
+  "provider_not_dispatched",
 ]);
 function knownRejection(error: unknown): boolean {
   return (
@@ -84,6 +86,7 @@ interface Attempt {
   dispatched: boolean;
   result: ProviderResult | null;
   terminal: Observation["status"];
+  notDispatched?: boolean;
   providerCall?: Promise<ProviderResult>;
 }
 export class ObservationExecutor {
@@ -156,7 +159,7 @@ export class ObservationExecutor {
       this.options,
       attempt.authorization,
       attempt.terminal,
-      attempt.result?.usage ?? null,
+      attempt.result?.usage ?? (attempt.notDispatched ? undispatchedUsage() : null),
     );
   }
   private monitor(attempt: Attempt, workflowSignal: AbortSignal) {
@@ -220,6 +223,7 @@ export class ObservationExecutor {
         signal: controller.signal,
       },
       this.options.env,
+      { providers: this.options.providers },
     );
     attempt.providerCall = providerCall;
     await this.persistResult(attempt, await bounded(providerCall, controller.signal));
@@ -233,6 +237,8 @@ export class ObservationExecutor {
   }
   private async persistFailure(attempt: Attempt, error: unknown) {
     const known = knownRejection(error);
+    attempt.notDispatched =
+      error instanceof ResearchError && error.code === "provider_not_dispatched";
     const cancelled = error instanceof ResearchError && error.code === "cancelled";
     attempt.terminal =
       attempt.dispatched && !known ? "unknown_outcome" : cancelled ? "cancelled" : "failed";
@@ -281,7 +287,11 @@ export class ObservationExecutor {
         observation.run_id,
         this.owner,
         150_000,
-        (observation.prompt.queries?.length ?? 1) * EXA_ESTIMATED_COST_PER_QUERY,
+        retrievalEstimate(
+          observation.target,
+          observation.prompt.queries ?? [observation.prompt.text],
+          this.options.providers,
+        ),
       ))
     )
       return this.waitForRetrieval(id, signal);
@@ -295,42 +305,49 @@ export class ObservationExecutor {
     const search = observation.target.search;
     if (search.mode !== "controlled")
       throw new ResearchError("invalid_retrieval", "Controlled search is required");
-    const authorization = retrievalAuthorization(observation, id);
+    const authorization = retrievalAuthorization(observation, id, this.options.providers);
     let call: Promise<RetrievalBundle> | undefined;
     let bundle: RetrievalBundle;
     let dispatched = false;
     try {
       await bounded(authorizeSpend(this.options, authorization), signal);
       const retrieve =
-        this.options.retrieveExa ?? (await import("../providers/index.js")).retrieveExa;
+        this.options.retrieveSearch ??
+        this.options.retrieveExa ??
+        (await import("../providers/index.js")).retrieveSearch;
       signal.throwIfAborted();
       dispatched = true;
       call = retrieve(
         {
           id,
+          engine: search.engine,
+          options: search.options,
           queries: observation.prompt.queries ?? [observation.prompt.text],
           max_results: search.max_results,
           max_characters: search.max_characters,
           signal,
         },
         this.options.env,
+        { providers: this.options.providers },
       );
       bundle = await bounded(call, signal);
     } catch (error) {
-      const unknown = dispatched && !knownRejection(error);
+      const notDispatched =
+        !dispatched || (error instanceof ResearchError && error.code === "provider_not_dispatched");
+      const unknown = !notDispatched && !knownRejection(error);
       await this.options.store.failRetrieval(
         id,
         this.owner,
         failure(error),
         unknown,
         undefined,
-        !dispatched,
+        notDispatched,
       );
       await settleSpend(
         this.options,
         authorization,
         unknown ? "unknown_outcome" : "failed",
-        dispatched ? null : retrievalUsage(),
+        notDispatched ? retrievalUsage() : null,
       );
       if (call && signal.aborted)
         void call

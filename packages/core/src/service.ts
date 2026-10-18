@@ -9,6 +9,7 @@ import {
   runInputSchema,
   type Target,
 } from "./contracts.js";
+import type { ProviderRegistry } from "./providers/types.js";
 import { estimateRun, targetAvailability } from "./targets.js";
 
 export interface RunPageQuery {
@@ -41,6 +42,7 @@ export interface ServiceOptions {
   store: ServiceStore;
   runtime: ServiceRuntime;
   targets: Target[];
+  providers?: ProviderRegistry;
   env: Record<string, string | undefined>;
   dispatchMode?: "native" | "external";
 }
@@ -68,7 +70,7 @@ export class ResearchService {
       observed_sample_scope: "last_10_runs",
       targets: this.options.targets.map((target) => ({
         ...target,
-        ...targetAvailability(target, this.options.env),
+        ...targetAvailability(target, this.options.env, this.options.providers),
         observed_capabilities: observed.get(target.id) ?? null,
       })),
     };
@@ -77,7 +79,7 @@ export class ResearchService {
   async estimateRun(value: unknown) {
     await this.options.store.recordToolCall("estimate_run");
     const input = runInputSchema.parse(value);
-    return estimateRun(input, this.selected(input));
+    return estimateRun(input, this.selected(input), this.options.providers);
   }
 
   async startRun(value: unknown) {
@@ -97,14 +99,14 @@ export class ResearchService {
     const input = runInputSchema.parse(value);
     const targets = this.selected(input);
     for (const target of targets) {
-      const availability = targetAvailability(target, this.options.env);
+      const availability = targetAvailability(target, this.options.env, this.options.providers);
       if (!availability.available)
         throw new ResearchError(
           "TARGET_UNAVAILABLE",
           `Target '${target.id}' is unavailable. ${availability.reason ?? "Configure its provider credentials before retrying."}`,
         );
     }
-    const estimate = estimateRun(input, targets);
+    const estimate = estimateRun(input, targets, this.options.providers);
     if (input.max_estimated_cost_usd !== undefined) {
       if (estimate.estimated_cost_usd === null || estimate.unpriced_targets.length)
         throw new ResearchError(

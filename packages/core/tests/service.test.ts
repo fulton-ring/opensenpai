@@ -9,7 +9,7 @@ import { ResearchService, type ServiceStore } from "../src/service.js";
 
 const target = targetSchema.parse({
   id: "test",
-  transport: "openai",
+  transport: "openrouter",
   model: "gpt-test",
   search: { mode: "off" },
   pricing: { input_per_million: 1, output_per_million: 2 },
@@ -19,7 +19,7 @@ const input = runInputSchema.parse({
   targets: ["test"],
   idempotency_key: "same",
 });
-function setup(env: Record<string, string | undefined> = { OPENAI_API_KEY: "test-key" }) {
+function setup(env: Record<string, string | undefined> = { OPENROUTER_API_KEY: "test-key" }) {
   let saved: RunRecord | undefined;
   let creates = 0;
   let queued = false;

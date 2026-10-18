@@ -11,6 +11,8 @@ import type {
   RunRecord,
 } from "../contracts.js";
 
+import type { ProviderRegistry, RetrievalInput } from "../providers/types.js";
+
 /** The runtime uses the persistence boundary, never a process-local job lock, to authorize work. */
 export interface RuntimeStore {
   getObservation(id: string): Promise<Observation | null>;
@@ -54,6 +56,11 @@ export interface RuntimeOptions {
   store: RuntimeStore;
   env: Record<string, string | undefined>;
   role: "all" | "api" | "worker";
+  providers?: ProviderRegistry;
+  retrieveSearch?: (
+    input: RetrievalInput,
+    env: Record<string, string | undefined>,
+  ) => Promise<RetrievalBundle>;
   executeProvider?: (
     input: ProviderInput,
     env: Record<string, string | undefined>,
