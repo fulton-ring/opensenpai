@@ -8,7 +8,7 @@ import {
 
 const key = { env: { OPENROUTER_API_KEY: "test", NATIVE_KEY: "native" }, fetch: globalThis.fetch };
 const router = createOpenRouterProvider({
-  nativeSearch: { apiKeyEnv: "NATIVE_KEY", policy: "workspace-native-only" },
+  nativeSearch: { apiKeyEnv: "NATIVE_KEY" },
 });
 const target = (mode = "off") =>
   targetSchema.parse({
@@ -29,7 +29,7 @@ const endpoints = [
   {
     tag: "author",
     provider_name: "Author",
-    native_tools: { "openrouter:web_search": {} },
+    native_tools: { "openrouter:web_search": { type: "web_search" } },
     pricing: { prompt: "0.000003", completion: "0.000004", web_search: "0.01" },
   },
 ];

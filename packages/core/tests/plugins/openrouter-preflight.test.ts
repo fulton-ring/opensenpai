@@ -1,0 +1,158 @@
+import { expect, it } from "vitest";
+import { type ProviderInput, targetSchema } from "../../src/contracts.js";
+import { createOpenRouterProvider, executeProvider } from "../../src/providers/index.js";
+
+const context = { env: { OPENROUTER_API_KEY: "fixture-key" }, fetch };
+const target = (search: unknown = { mode: "native" }) =>
+  targetSchema.parse({
+    id: "native-check",
+    transport: "openrouter",
+    model: "author/model",
+    search,
+  });
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const capable = {
+  tag: "native-provider",
+  provider_name: "Provider",
+  status: 0,
+  native_tools: { "openrouter:web_search": { type: "provider_search" } },
+  pricing: { prompt: "0.000001", completion: "0.000002", web_search: "0.01" },
+};
+const catalog = (endpoints: unknown[]) => json({ data: { id: "author/model", endpoints } });
+const input = (value = target()): ProviderInput => ({
+  observation_id: "o",
+  target: value,
+  prompt: { id: "p", text: "Research" },
+  locale: "en-US",
+  signal: AbortSignal.timeout(5000),
+});
+const raw = {
+  id: "gen-1",
+  model: "author/model",
+  provider: "Provider",
+  object: "chat.completion",
+  created: 1,
+  choices: [{ index: 0, message: { role: "assistant", content: "Answer" }, finish_reason: "stop" }],
+  usage: {
+    prompt_tokens: 10,
+    completion_tokens: 5,
+    total_tokens: 15,
+    cost: 0.01,
+    server_tool_use_details: { web_search_requests: 1 },
+  },
+};
+
+it("uses the ordinary key and resolves only a native-capable endpoint without a workspace policy", async () => {
+  const adapter = createOpenRouterProvider();
+  expect(adapter.availability(target(), context)).toEqual({ available: true });
+  const requests: string[] = [];
+  const resolved = await adapter.resolveTarget?.(target(), {
+    ...context,
+    fetch: async (url, init) => {
+      requests.push(String(url));
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture-key");
+      return catalog([{ ...capable, tag: "unsupported", native_tools: {} }, capable]);
+    },
+  });
+  expect(resolved?.provider_options?.provider).toBe("native-provider");
+  expect(requests).toHaveLength(1);
+  expect(requests[0]).toContain("/endpoints");
+});
+
+it.each([undefined, null, false, true, {}, { type: "" }, { type: 1 }, "web_search"])(
+  "rejects unknown native capability metadata before generation: %j",
+  async (tool) => {
+    const calls: string[] = [];
+    const fetcher: typeof fetch = async (url) => {
+      calls.push(String(url));
+      return catalog([{ ...capable, native_tools: { "openrouter:web_search": tool } }]);
+    };
+    const adapter = createOpenRouterProvider({ nativeSearch: { apiKeyEnv: "OPENROUTER_API_KEY" } });
+    await expect(
+      adapter.resolveTarget?.(target(), { ...context, fetch: fetcher }),
+    ).rejects.toMatchObject({ code: "target_unavailable" });
+    await expect(adapter.execute(input(), { ...context, fetch: fetcher })).rejects.toMatchObject({
+      code: "provider_not_dispatched",
+    });
+    expect(calls).toHaveLength(2);
+    expect(calls.every((url) => url.endsWith("/endpoints"))).toBe(true);
+  },
+);
+
+it("rechecks a persisted native pin and refuses capability loss before a paid call", async () => {
+  let capableNow = true;
+  const calls: string[] = [];
+  const fetcher: typeof fetch = async (url) => {
+    calls.push(String(url));
+    return catalog([
+      { ...capable, native_tools: capableNow ? capable.native_tools : {} },
+      { ...capable, tag: "alternate" },
+    ]);
+  };
+  const adapter = createOpenRouterProvider();
+  const resolved = await adapter.resolveTarget?.(target(), { ...context, fetch: fetcher });
+  if (!resolved) throw new Error("Missing resolved target");
+  capableNow = false;
+  await expect(
+    adapter.execute(input(resolved), { ...context, fetch: fetcher }),
+  ).rejects.toMatchObject({ code: "provider_not_dispatched" });
+  expect(calls.every((url) => url.endsWith("/endpoints"))).toBe(true);
+});
+
+it.each([
+  { engine: "native", search: { mode: "native" }, nativeTools: capable.native_tools },
+  { engine: "exa", search: { mode: "server", engine: "exa" }, nativeTools: {} },
+])(
+  "pins $engine requests without imposing native capability on explicit Exa",
+  async ({ engine, search, nativeTools }) => {
+    let paid = 0;
+    const fetcher: typeof fetch = async (url, init) => {
+      if (String(url).endsWith("/endpoints"))
+        return catalog([{ ...capable, native_tools: nativeTools }]);
+      if (String(url).includes("/generation?"))
+        return json({
+          data: {
+            model: "author/model",
+            provider_name: "Provider",
+            web_search_engine: engine,
+            total_cost: 0.01,
+          },
+        });
+      paid++;
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider).toEqual({
+        only: ["native-provider"],
+        order: ["native-provider"],
+        allow_fallbacks: false,
+        require_parameters: true,
+      });
+      expect(body.tools[0].parameters.engine).toBe(engine);
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture-key");
+      return json(raw);
+    };
+    const result = await executeProvider(input(target(search)), context.env, { fetch: fetcher });
+    expect(paid).toBe(1);
+    expect(result.search_activity.engine).toBe(engine);
+  },
+);
+
+it.each([
+  ["inactive endpoint", { ...capable, status: 1 }, 200, "author/model"],
+  ["unavailable catalog", capable, 503, "author/model"],
+  ["different model", capable, 200, "different/model"],
+])("rejects %s without any paid generation", async (_name, endpoint, status, model) => {
+  const calls: string[] = [];
+  const adapter = createOpenRouterProvider();
+  await expect(
+    adapter.execute(input(), {
+      ...context,
+      fetch: async (url) => {
+        calls.push(String(url));
+        return json({ data: { id: model, endpoints: [endpoint] } }, status);
+      },
+    }),
+  ).rejects.toMatchObject({ code: "provider_not_dispatched" });
+  expect(calls).toHaveLength(1);
+  expect(calls[0]).toContain("/endpoints");
+});

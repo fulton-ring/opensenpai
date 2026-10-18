@@ -12,7 +12,7 @@ import type { ModelProvider, ProviderContext } from "./types.js";
 
 interface RouterOptions {
   apiKeyEnv?: string;
-  nativeSearch?: { apiKeyEnv: string; policy: "workspace-native-only" };
+  nativeSearch?: { apiKeyEnv: string };
 }
 
 interface Endpoint {
@@ -29,25 +29,13 @@ const sonar = (target: Target) => target.model.startsWith("perplexity/sonar");
 
 function apiKeyEnv(options: RouterOptions, target: Target) {
   return target.search.mode === "native"
-    ? options.nativeSearch?.apiKeyEnv
+    ? (options.nativeSearch?.apiKeyEnv ?? options.apiKeyEnv ?? "OPENROUTER_API_KEY")
     : (options.apiKeyEnv ?? "OPENROUTER_API_KEY");
 }
 
 function availability(options: RouterOptions, target: Target, context: ProviderContext) {
-  if (target.search.mode === "native" && options.nativeSearch?.policy !== "workspace-native-only")
-    return {
-      available: false,
-      reason: "Native search requires an explicit workspace-native-only policy declaration",
-    };
   const key = apiKeyEnv(options, target);
-  if (!key || !context.env[key]?.trim())
-    return {
-      available: false,
-      reason:
-        target.search.mode === "native"
-          ? "Native search requires a dedicated key in a workspace restricted to native search"
-          : `Missing ${key}`,
-    };
+  if (!context.env[key]?.trim()) return { available: false, reason: `Missing ${key}` };
   if (target.model.includes(":online"))
     return { available: false, reason: "Use explicit search configuration instead of :online" };
   if (sonar(target) && target.search.mode !== "native")
@@ -65,7 +53,7 @@ function eligible(target: Target, value: Record<string, unknown>) {
   if (value.status !== undefined && value.status !== 0) return false;
   if (target.search.mode !== "native") return true;
   return (
-    Boolean(obj(value.native_tools)["openrouter:web_search"]) ||
+    Boolean(str(obj(obj(value.native_tools)["openrouter:web_search"]).type)?.trim()) ||
     (sonar(target) && value.tag === "perplexity")
   );
 }
@@ -306,7 +294,7 @@ async function verify(
   return result;
 }
 
-/** Creates a catalog-resolved OpenRouter adapter that pins endpoints and verifies requested search execution. */
+/** Filter model/search pairs against current OpenRouter capabilities, pin the route, and verify execution. */
 export function createOpenRouterProvider(options: RouterOptions = {}): ModelProvider {
   return {
     availability: (target, context) => availability(options, target, context),

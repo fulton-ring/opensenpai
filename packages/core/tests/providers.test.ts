@@ -42,7 +42,7 @@ const raw = {
 const providers = createProviderRegistry({
   models: {
     openrouter: createOpenRouterProvider({
-      nativeSearch: { apiKeyEnv: "NATIVE_KEY", policy: "workspace-native-only" },
+      nativeSearch: { apiKeyEnv: "NATIVE_KEY" },
     }),
   },
 });
@@ -56,7 +56,7 @@ function mockFetch(engine = "native", provider = "OpenAI"): typeof fetch {
               {
                 tag: "openai",
                 provider_name: "OpenAI",
-                native_tools: { "openrouter:web_search": {} },
+                native_tools: { "openrouter:web_search": { type: "web_search" } },
               },
             ],
           },
@@ -131,11 +131,11 @@ it("rejects unavailable native endpoints before paid dispatch", async () => {
   ).rejects.toMatchObject({ code: "provider_not_dispatched" });
   expect(calls).toBe(1);
 });
-it("does not enable native search using the general workspace key", async () => {
+it("rejects a missing OpenRouter key before requesting metadata", async () => {
   await expect(
     executeProvider(
       input(),
-      { OPENROUTER_API_KEY: "x" },
+      {},
       {
         fetch: async () => {
           throw new Error("must not fetch");
