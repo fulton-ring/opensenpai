@@ -5,7 +5,7 @@ import {
   ResearchError,
   type Target,
 } from "../contracts.js";
-import { num, obj, records, str } from "./normalize.js";
+import { arr, num, obj, records, str } from "./normalize.js";
 import { ProviderResponseError } from "./outcomes.js";
 import { createSdkProvider } from "./sdk.js";
 import type { ModelProvider, ProviderContext } from "./types.js";
@@ -244,8 +244,7 @@ async function generationMetadata(
   key: string,
   signal: AbortSignal,
 ) {
-  const raw = obj(result.raw_response);
-  const responses = Array.isArray(raw.responses) ? records(raw.responses) : [raw];
+  const responses = responseBodies(result);
   const items: (Record<string, unknown> | null)[] = [];
   for (const response of responses) {
     try {
@@ -257,6 +256,83 @@ async function generationMetadata(
   return items;
 }
 
+function responseBodies(result: ProviderResult) {
+  const raw = obj(result.raw_response);
+  return Array.isArray(raw.responses) ? records(raw.responses) : [raw];
+}
+
+function searchStages(response: Record<string, unknown>) {
+  return records(obj(response.openrouter_metadata).pipeline)
+    .filter(
+      (stage) =>
+        stage.type === "server_tools" &&
+        stage.name === "server-tools" &&
+        arr(obj(stage.data).tools).includes("openrouter:web_search"),
+    )
+    .map((stage) => obj(stage.data));
+}
+
+function responseEngines(response: Record<string, unknown>) {
+  return searchStages(response).flatMap((stage) => {
+    const engines = arr(obj(stage.executed_engines)["openrouter:web_search"]).map(
+      (engine) => str(engine) ?? "unknown",
+    );
+    return stage.mode === "native" ? ["native", ...engines] : engines;
+  });
+}
+
+function responseProof(
+  response: Record<string, unknown>,
+  target: Target,
+  selected: Endpoint | null,
+  engine: string,
+) {
+  const stages = searchStages(response);
+  const engines = responseEngines(response);
+  return (
+    response.model === target.model &&
+    response.provider === selected?.providerName &&
+    obj(response.openrouter_metadata).requested === target.model &&
+    stages.length > 0 &&
+    stages.every((stage) => stage.mode === (engine === "native" ? "native" : "sdk")) &&
+    engines.length > 0 &&
+    engines.every((value) => value === engine)
+  );
+}
+
+function searchProof(
+  response: Record<string, unknown>,
+  generation: Record<string, unknown> | null,
+  target: Target,
+  selected: Endpoint | null,
+  engine: string,
+) {
+  const facts = [
+    [str(response.model), target.model],
+    [str(response.provider), selected?.providerName],
+    [str(obj(response.openrouter_metadata).requested), target.model],
+    [str(generation?.model), target.model],
+    [str(generation?.provider_name), selected?.providerName],
+    [str(generation?.web_search_engine), engine],
+  ];
+  if (facts.some(([actual, expected]) => actual !== undefined && actual !== expected)) return false;
+  if (responseEngines(response).some((value) => value !== engine)) return false;
+  return (
+    responseProof(response, target, selected, engine) ||
+    (generation?.model === target.model &&
+      generation?.provider_name === selected?.providerName &&
+      generation?.web_search_engine === engine)
+  );
+}
+
+function observedEngine(
+  response: Record<string, unknown>,
+  generation: Record<string, unknown> | null,
+) {
+  const engines = [...new Set(responseEngines(response))];
+  return str(generation?.web_search_engine) ?? (engines.length === 1 ? engines[0] : null);
+}
+
 async function verify(
   result: ProviderResult,
   input: ProviderInput,
@@ -265,6 +341,7 @@ async function verify(
   selected: Endpoint | null,
 ): Promise<ProviderResult> {
   if (!searchEnabled(input.target)) return result;
+  const responses = responseBodies(result);
   const items = await generationMetadata(result, context, key, input.signal);
   result.raw_response = { generation: result.raw_response, generation_metadata: items };
   const costs = items.map((item) => num(item?.total_cost));
@@ -272,17 +349,22 @@ async function verify(
     result.usage.reported_cost_usd = costs.reduce<number>((total, cost) => total + (cost ?? 0), 0);
   const expectedEngine =
     input.target.search.mode === "server" ? input.target.search.engine : "native";
-  const engines = [...new Set(items.map((item) => str(item?.web_search_engine) ?? null))];
+  const engines = [
+    ...new Set(responses.map((response, i) => observedEngine(response, items[i] ?? null))),
+  ];
   result.search_activity.engine = engines.length === 1 ? (engines[0] ?? null) : null;
-  const providers = [...new Set(items.map((item) => str(item?.provider_name) ?? null))];
+  const providers = [
+    ...new Set(
+      responses.map(
+        (response, i) => str(items[i]?.provider_name) ?? str(response.provider) ?? null,
+      ),
+    ),
+  ];
   result.serving_provider = providers.length === 1 ? (providers[0] ?? null) : null;
   const proved =
-    items.length > 0 &&
-    items.every(
-      (item) =>
-        item?.model === input.target.model &&
-        item?.provider_name === selected?.providerName &&
-        item?.web_search_engine === expectedEngine,
+    responses.length > 0 &&
+    responses.every((response, i) =>
+      searchProof(response, items[i] ?? null, input.target, selected, expectedEngine),
     );
   if ((result.usage.search_requests ?? 0) <= 0 || !proved)
     throw new ProviderResponseError(
