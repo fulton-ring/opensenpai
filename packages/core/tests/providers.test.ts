@@ -152,7 +152,8 @@ it("never retries a paid generation after HTTP failure", async () => {
   let calls = 0;
   await expect(
     executeProvider(input("off"), env, {
-      fetch: async () => {
+      fetch: async (url, init) => {
+        if (String(url).includes("/endpoints")) return mockFetch()(url, init);
         calls++;
         return response({ error: { message: "private" } }, 500);
       },

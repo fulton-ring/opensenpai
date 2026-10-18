@@ -16,6 +16,8 @@ export interface SdkModel {
 }
 export interface SdkProviderOptions {
   apiKeyEnv?: string;
+  resolveTarget?: ModelProvider["resolveTarget"];
+  listModels?: ModelProvider["listModels"];
   createModel(input: ProviderInput, context: ProviderContext): SdkModel | Promise<SdkModel>;
   availability?(target: Target, context: ProviderContext): Availability;
   verify?(
@@ -124,6 +126,8 @@ async function generate(
 export function createSdkProvider(options: SdkProviderOptions): ModelProvider {
   return {
     availability: (target, context) => availability(options, target, context),
+    resolveTarget: options.resolveTarget,
+    listModels: options.listModels,
     execute: (input, context) => generate(input, context, options),
   };
 }
@@ -131,9 +135,24 @@ export function createOpenAICompatibleProvider(options: {
   name: string;
   baseURL: string;
   apiKeyEnv: string;
+  pricing?:
+    | Target["pricing"]
+    | ((
+        target: Target,
+        context: ProviderContext,
+      ) => Target["pricing"] | Promise<Target["pricing"]>);
+  listModels?: ModelProvider["listModels"];
 }): ModelProvider {
   return createSdkProvider({
     apiKeyEnv: options.apiKeyEnv,
+    listModels: options.listModels,
+    resolveTarget: async (target, context) => ({
+      ...target,
+      pricing:
+        typeof options.pricing === "function"
+          ? await options.pricing(target, context)
+          : options.pricing,
+    }),
     createModel: (input, context) => ({
       model: createOpenAICompatible({
         name: options.name,

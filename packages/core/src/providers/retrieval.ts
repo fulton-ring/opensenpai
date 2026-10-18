@@ -1,7 +1,9 @@
 import { ResearchError, type RetrievalBundle, type Source } from "../contracts.js";
-import { EXA_SEARCH_ESTIMATE_USD } from "../targets.js";
 import { type Json, num, obj, records, source } from "./normalize.js";
 import type { ProviderEnvironment, RetrievalInput, RetrievalProvider } from "./types.js";
+
+export const EXA_ESTIMATED_COST_PER_QUERY = 0.02;
+export const EXA_SEARCH_ESTIMATE_USD = EXA_ESTIMATED_COST_PER_QUERY;
 
 async function http(
   fetcher: typeof fetch,

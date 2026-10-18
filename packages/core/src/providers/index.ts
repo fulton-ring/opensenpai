@@ -10,10 +10,9 @@ import type {
   RetrievalProvider,
 } from "./types.js";
 
-export const EXA_ESTIMATED_COST_PER_QUERY = 0.02;
 export { createOpenRouterProvider } from "./openrouter.js";
 export { ProviderResponseError } from "./outcomes.js";
-export { exaProvider } from "./retrieval.js";
+export { EXA_ESTIMATED_COST_PER_QUERY, EXA_SEARCH_ESTIMATE_USD, exaProvider } from "./retrieval.js";
 export type { SdkModel, SdkProviderOptions } from "./sdk.js";
 export { createOpenAICompatibleProvider, createSdkProvider } from "./sdk.js";
 export type * from "./types.js";
