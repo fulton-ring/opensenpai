@@ -9,6 +9,7 @@ import {
 import type { ProviderRegistry } from "../providers/types.js";
 import { retrievalEstimate } from "../targets.js";
 import type { RuntimeOptions } from "./types.js";
+/** Build a shared-retrieval spend request using the configured adapter estimate. */
 export function retrievalAuthorization(
   observation: Observation,
   id: string,
@@ -27,6 +28,7 @@ export function retrievalAuthorization(
     ),
   };
 }
+/** Represent retrieval settlement, or known zero usage when no request was dispatched. */
 export function retrievalUsage(bundle?: RetrievalBundle): Usage {
   return {
     input_tokens: null,
@@ -39,6 +41,7 @@ export function retrievalUsage(bundle?: RetrievalBundle): Usage {
     raw: {},
   };
 }
+/** Return explicit zero usage for an operation confirmed never to have been dispatched. */
 export function undispatchedUsage(): Usage {
   return {
     input_tokens: 0,
@@ -51,6 +54,7 @@ export function undispatchedUsage(): Usage {
     raw: {},
   };
 }
+/** Run the host spend gate and convert unexpected failures into a safe denial. */
 export async function authorizeSpend(
   options: RuntimeOptions,
   attempt: SpendAuthorization,
@@ -62,6 +66,7 @@ export async function authorizeSpend(
     throw new ResearchError("authorization_denied", "Spend authorization was denied");
   }
 }
+/** Report background failures without allowing a host callback to break settlement. */
 export function reportError(options: RuntimeOptions, error: unknown): void {
   try {
     options.onError?.(error);
@@ -69,6 +74,7 @@ export function reportError(options: RuntimeOptions, error: unknown): void {
     return;
   }
 }
+/** Notify the host of settlement while retaining runtime progress if reporting fails. */
 export async function settleSpend(
   options: RuntimeOptions,
   attempt: SpendAuthorization,

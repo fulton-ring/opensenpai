@@ -1,3 +1,4 @@
+/** Idempotent research tables and indexes, including immutable usage and reconciliation records. */
 export const migrations = [
   `CREATE TABLE IF NOT EXISTS app_runs (
     workspace_id TEXT NOT NULL, id TEXT NOT NULL, idempotency_key TEXT NOT NULL,

@@ -2,6 +2,7 @@ import { ResearchError } from "../contracts.js";
 import type { ResearchClient } from "./client.js";
 
 let localWrites: Promise<unknown> = Promise.resolve();
+/** Serialize local libSQL writes with a bounded wait; remote databases own their locking. */
 export function writeLock<T>(
   client: Pick<ResearchClient, "protocol">,
   operation: () => Promise<T>,

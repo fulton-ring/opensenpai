@@ -38,6 +38,7 @@ function workflows(executor: ObservationExecutor) {
   };
 }
 
+/** Coordinate Mastra workflows while durable storage authorizes each paid observation. */
 export class Runtime {
   readonly mastra: Mastra;
   private readonly executor: ObservationExecutor;
@@ -145,6 +146,7 @@ export class Runtime {
     await this.ownedPubsub?.close();
   }
 }
+/** Create orchestration without starting workers or dispatching paid work. */
 export function createRuntime(options: RuntimeOptions) {
   return new Runtime(options);
 }

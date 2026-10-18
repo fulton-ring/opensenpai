@@ -10,9 +10,10 @@ import {
 import { defaultProviders } from "./providers/index.js";
 import type { ProviderRegistry } from "./providers/types.js";
 
-// Presets are optional; agents select models and search through MCP.
+/** Optional preset catalog; agents can select models and search directly through MCP. */
 export const defaultTargets: Target[] = [];
 
+/** Load and validate operator presets from configuration or the environment. */
 export function loadTargets(
   env: Record<string, string | undefined>,
   configuredTargets?: unknown,
@@ -25,6 +26,7 @@ export function loadTargets(
   return targets;
 }
 
+/** Check that installed model and retrieval adapters can serve the selected target. */
 export function targetAvailability(
   target: Target,
   env: Record<string, string | undefined>,
@@ -43,6 +45,7 @@ export function targetAvailability(
   );
 }
 
+/** Obtain a finite, nonnegative reservation estimate from the selected retrieval adapter. */
 export function retrievalEstimate(
   target: Target,
   queries: string[],
@@ -84,6 +87,7 @@ function observationEstimate(text: string, target: Target): number | null {
   );
 }
 
+/** Estimate model work and deduplicated shared retrieval for a validated batch. */
 export function estimateRun(
   raw: RunInput,
   targets: Target[],

@@ -27,22 +27,26 @@ import {
 } from "./records.js";
 import { migrations } from "./schema.js";
 
+/** Inject a clock or native transaction runner without changing research state semantics. */
 export interface StoreOptions {
   clock?: () => Date;
   transactionRunner?: TransactionRunner;
 }
+/** Filter workspace runs and page them by creation time and stable ID. */
 export interface RunListQuery {
   project?: string;
   limit?: number;
   before?: string;
   cursor?: string;
 }
+/** Persisted MCP invocation metadata used to correlate agent activity with runs. */
 export interface ToolCall {
   tool: string;
   run_id: string | null;
   created_at: string;
 }
 
+/** Persist workspace-isolated research, atomic execution claims, and immutable spend evidence. */
 export class ResearchStore {
   private readonly clock: () => Date;
   private readonly transactionRunner?: TransactionRunner;
@@ -690,6 +694,7 @@ export class ResearchStore {
   }
 }
 
+/** Public persistence boundary usable locally or through the private Cloudflare RPC bridge. */
 export type ResearchStorage = Omit<ResearchStore, "client">;
 export type { ResearchClient, ResearchConnection, TransactionRunner } from "./client.js";
 export type { DurableResearchStorage, DurableSqlCursor, DurableSqlValue } from "./durable-sql.js";

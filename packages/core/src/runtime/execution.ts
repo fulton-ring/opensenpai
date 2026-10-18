@@ -66,6 +66,7 @@ function bounded<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
     if (signal.aborted) abort();
   });
 }
+/** Derive a stable bundle key so equivalent search work is shared within one run. */
 export function retrievalId(observation: Observation): string {
   return `retrieval_${createHash("sha256")
     .update(
@@ -89,6 +90,7 @@ interface Attempt {
   notDispatched?: boolean;
   providerCall?: Promise<ProviderResult>;
 }
+/** Execute claimed observations without automatically replaying uncertain paid operations. */
 export class ObservationExecutor {
   private readonly active = new Map<string, Attempt>();
   private stopped = false;

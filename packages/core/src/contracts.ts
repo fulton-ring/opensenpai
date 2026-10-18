@@ -3,6 +3,7 @@ import { z } from "zod";
 const adapterId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/);
 const pluginOptions = z.record(z.string(), z.json());
 
+/** Validate separately selected search behavior and bound retrieval or native search work. */
 export const searchSchema = z.discriminatedUnion("mode", [
   z.object({ mode: z.literal("off") }).strict(),
   z
@@ -26,6 +27,7 @@ export const searchSchema = z.discriminatedUnion("mode", [
     .strict(),
 ]);
 
+/** Validate operator-supplied rates used to reserve estimated spend before dispatch. */
 export const pricingSchema = z
   .object({
     input_per_million: z.number().nonnegative(),
@@ -34,6 +36,7 @@ export const pricingSchema = z
   })
   .strict();
 
+/** Validate a resolved model adapter, search configuration, and execution limits. */
 export const targetSchema = z
   .object({
     id: z.string().regex(/^[a-zA-Z0-9_-]{1,80}$/),
@@ -52,6 +55,7 @@ export const targetSchema = z
   })
   .strict();
 
+/** Validate a research prompt and optional queries for shared controlled retrieval. */
 export const promptSchema = z
   .object({
     id: z.string().min(1).max(80),
@@ -60,6 +64,7 @@ export const promptSchema = z
   })
   .strict();
 
+/** Validate agent-selected models and search without accepting operator-only pricing or credentials. */
 export const inlineTargetSchema = targetSchema
   .omit({
     transport: true,
@@ -72,8 +77,10 @@ export const inlineTargetSchema = targetSchema
     serving_provider: z.string().min(1).max(200).optional(),
   })
   .strict();
+/** Accept either a configured preset ID or an inline model and search selection. */
 export const targetSelectionSchema = z.union([z.string().min(1).max(80), inlineTargetSchema]);
 
+/** Validate bounded research batches and their workspace-scoped idempotency keys. */
 export const runInputSchema = z
   .object({
     prompts: z.array(promptSchema).min(1).max(25),
@@ -100,11 +107,17 @@ export const runInputSchema = z
     }
   });
 
+/** Resolved execution configuration persisted with every observation for reproducibility. */
 export type Target = z.infer<typeof targetSchema>;
+/** Agent-selectable model and search settings resolved against installed adapters. */
 export type InlineTarget = z.infer<typeof inlineTargetSchema>;
+/** A named research question with optional explicit retrieval queries. */
 export type Prompt = z.infer<typeof promptSchema>;
+/** Validated batch request including repetitions, locale, and optional spend cap. */
 export type RunInput = z.infer<typeof runInputSchema>;
+/** Registry key selecting the adapter that executes a model request. */
 export type Transport = Target["transport"];
+/** Durable observation state; unknown outcomes retain reservations until reconciled. */
 export type ObservationStatus =
   | "pending"
   | "running"
@@ -112,14 +125,17 @@ export type ObservationStatus =
   | "failed"
   | "cancelled"
   | "unknown_outcome";
+/** Aggregate lifecycle derived from observation states and cancellation requests. */
 export type RunStatus = "queued" | "running" | "succeeded" | "partial" | "failed" | "cancelled";
 
+/** Serializable failure information that preserves whether retrying is safe. */
 export interface Failure {
   code: string;
   message: string;
   retryable: boolean;
 }
 
+/** Retrieved evidence, with optional provider metadata and full source text. */
 export interface Source {
   url: string;
   title?: string;
@@ -127,6 +143,7 @@ export interface Source {
   metadata?: unknown;
 }
 
+/** An answer citation preserving provider locators and their coordinate units. */
 export interface Citation {
   url: string;
   title?: string;
@@ -137,6 +154,7 @@ export interface Citation {
   metadata?: unknown;
 }
 
+/** Normalized usage and cost evidence; null values mean the provider did not report them. */
 export interface Usage {
   input_tokens: number | null;
   output_tokens: number | null;
@@ -148,6 +166,7 @@ export interface Usage {
   raw: unknown;
 }
 
+/** Normalized answer with provenance, observed search activity, and original provider evidence. */
 export interface ProviderResult {
   answer: string;
   requested_model: string;
@@ -168,6 +187,7 @@ export interface ProviderResult {
   warnings: string[];
 }
 
+/** Shared search evidence persisted once and reused by compatible observations. */
 export interface RetrievalBundle {
   id: string;
   queries: string[];
@@ -179,6 +199,7 @@ export interface RetrievalBundle {
   created_at: string;
 }
 
+/** Persisted prompt-target execution with durable ownership, lease, and result evidence. */
 export interface Observation {
   id: string;
   workspace_id: string;
@@ -201,6 +222,7 @@ export interface Observation {
   updated_at: string;
 }
 
+/** Workspace-scoped batch state with aggregate outcomes and settled or reserved spend. */
 export interface RunRecord {
   id: string;
   workspace_id: string;
@@ -216,6 +238,7 @@ export interface RunRecord {
   updated_at: string;
 }
 
+/** Pre-dispatch cost estimate identifying targets without configured model pricing. */
 export interface RunEstimate {
   total_observations: number;
   estimated_cost_usd: number | null;
@@ -229,6 +252,7 @@ export interface RunEstimate {
   }[];
 }
 
+/** Filters and ordinal pagination for reading a run’s observation evidence. */
 export interface ResultQuery {
   run_id: string;
   target_id?: string;
@@ -239,6 +263,7 @@ export interface ResultQuery {
   include_raw?: boolean;
 }
 
+/** Single model invocation with resolved settings, optional shared evidence, and cancellation. */
 export interface ProviderInput {
   observation_id: string;
   prompt: Prompt;
@@ -248,6 +273,7 @@ export interface ProviderInput {
   signal: AbortSignal;
 }
 
+/** Identifies a paid operation and its estimated charge before dispatch. */
 export interface SpendAuthorization {
   /** Omitted operations are model calls; retrieval uses its shared bundle ID as attempt_id. */
   operation?: "model" | "retrieval";
@@ -258,6 +284,7 @@ export interface SpendAuthorization {
   estimated_cost_usd: number | null;
 }
 
+/** Optional host callbacks for authorizing paid work and recording settlement evidence. */
 export interface ExecutionHooks {
   authorize?: (attempt: SpendAuthorization) => Promise<void>;
   settled?: (
@@ -267,6 +294,7 @@ export interface ExecutionHooks {
   ) => Promise<void>;
 }
 
+/** Durable shared-retrieval claim and its terminal evidence or uncertain outcome. */
 export interface RetrievalRecord {
   id: string;
   status: "running" | "succeeded" | "failed" | "unknown_outcome";
@@ -276,6 +304,7 @@ export interface RetrievalRecord {
   error: Failure | null;
 }
 
+/** Domain error whose code and retry policy can cross process boundaries safely. */
 export class ResearchError extends Error {
   constructor(
     public code: string,

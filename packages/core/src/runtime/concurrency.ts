@@ -7,6 +7,7 @@ interface Waiter {
 export function concurrencyLimit(value = 2): number {
   return Number.isFinite(value) ? Math.max(1, Math.min(8, Math.floor(value))) : 2;
 }
+/** Bound in-process work with abortable FIFO acquisition and idempotent release. */
 export class Concurrency {
   private active = 0;
   private readonly waiters: Waiter[] = [];

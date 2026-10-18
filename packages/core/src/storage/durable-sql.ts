@@ -2,10 +2,13 @@ import type { InArgs, InStatement, InValue, ResultSet, Row, TransactionMode } fr
 import type { ResearchClient } from "./client.js";
 import { ResearchStore, type StoreOptions } from "./index.js";
 
+/** SQLite bindings accepted by Cloudflare Durable Object storage. */
 export type DurableSqlValue = string | number | null | ArrayBuffer;
+/** Structural cursor contract consumed synchronously before yielding execution. */
 export interface DurableSqlCursor extends Iterable<Record<string, DurableSqlValue>> {
   columnNames: string[];
 }
+/** Native SQL and async transaction capabilities required from a Durable Object. */
 export interface DurableResearchStorage {
   sql: { exec(query: string, ...bindings: DurableSqlValue[]): DurableSqlCursor };
   transaction<T>(operation: () => Promise<T>): Promise<T>;
@@ -31,6 +34,7 @@ function statement(input: InStatement, supplied?: InArgs) {
   return { sql, args: args.map(binding) };
 }
 
+/** Adapt native Durable Object SQL to the research store’s SQL client contract. */
 export class DurableSqlClient implements ResearchClient {
   readonly protocol = "cloudflare";
   constructor(private readonly storage: DurableResearchStorage) {}
@@ -75,6 +79,7 @@ export class DurableSqlClient implements ResearchClient {
   }
 }
 
+/** Create workspace-scoped research persistence using native Durable Object transactions. */
 export function createDurableResearchStore(
   storage: DurableResearchStorage,
   workspaceId: string,

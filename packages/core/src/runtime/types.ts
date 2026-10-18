@@ -52,6 +52,7 @@ export interface RuntimeStore {
     notDispatched?: boolean,
   ): Promise<void>;
 }
+/** Configure orchestration, persistence, adapter injection, and paid-operation hooks. */
 export interface RuntimeOptions {
   store: RuntimeStore;
   env: Record<string, string | undefined>;
