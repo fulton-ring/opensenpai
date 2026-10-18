@@ -45,6 +45,9 @@
       "libsql",
       "sharp",
       "workerd"
-    ]
+    ],
+    "overrides": {
+      "@hono/node-server": "1.19.17"
+    }
   }
 }

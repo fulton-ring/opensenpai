@@ -60,6 +60,7 @@ export interface ServiceOptions {
   providers?: ProviderRegistry;
   env: Record<string, string | undefined>;
   dispatchMode?: "native" | "external";
+  authorizeRun?: (estimate: RunEstimate) => Promise<void>;
 }
 const terminal = (run: RunRecord) => !["queued", "running"].includes(run.status);
 
@@ -225,6 +226,7 @@ export class ResearchService {
           "Estimated run cost exceeds max_estimated_cost_usd. Reduce observations or increase the budget.",
         );
     }
+    await this.options.authorizeRun?.(estimate);
     return this.options.store.createRun(input, targets, estimate);
   }
 

@@ -1,12 +1,14 @@
 # OpenSenpai
 
-OpenSenpai is an MCP service for running bounded research experiments across model providers and search modes. An external agent supplies prompts, chooses targets, starts a run, and retrieves durable results for its own analysis. That agent owns scheduling and synthesis; OpenSenpai executes accepted work through native Mastra workflows and stores evidence in libSQL locally or Cloudflare-native databases when hosted.
+OpenSenpai is an MCP and REST service for running bounded research experiments across model providers and search modes. An external agent supplies prompts, chooses targets, starts a run, and retrieves durable results for its own analysis. That agent owns scheduling and synthesis; OpenSenpai executes accepted work through native Mastra workflows and stores evidence in libSQL locally or Cloudflare-native databases when hosted.
 
 The pnpm/Turborepo workspace contains:
 
-- `packages/core`: contracts, provider adapters, target catalog, storage, and workflows.
-- `apps/server`: Node CLI, MCP tools, and authenticated HTTP transport.
+- `packages/core`: the `@opensenpai/core` SDK, with contracts, provider adapters, target catalog, storage, and workflows.
+- `apps/server`: the `@opensenpai/server` SDK, Node CLI, MCP tools, and authenticated REST/HTTP transport.
 - `apps/cloudflare`: Worker ingress, queue delivery, and Cloudflare Container integration.
+
+The managed service lives in the separate private repository `../opensenpai-web`: its landing page, dashboard, account gateway, identity adapters, wallets, payments, and tenant routing are independent of the public research engine. This repository provides self-hosted research with your own provider credentials and no service fees or account/payment setup. Public builds and Docker images require no private checkout or frontend assets.
 
 ## Local setup
 
@@ -20,7 +22,7 @@ pnpm build
 pnpm start --role all --transport http
 ```
 
-The server defaults to `http://127.0.0.1:4111`; MCP is at `/mcp`. `/health` checks liveness and `/ready` checks readiness. Keep credentials in your ignored `.env` or inject them at runtime. The service uses your provider accounts; calling `start_run` can incur charges.
+The server defaults to `http://127.0.0.1:4111`; MCP is at `/mcp`, and REST resources are under `/api/v1/research`. Both HTTP interfaces use the operator bearer token. See the [API and SDK contract](docs/api.md). `/health` checks liveness and `/ready` checks readiness. Keep credentials in your ignored `.env` or inject them at runtime. The service uses your provider accounts; calling `start_run` can incur charges.
 
 The bundled model gateway is OpenRouter; shared retrieval uses Exa. Set `OPENROUTER_API_KEY` and, for controlled Exa retrieval, `EXA_API_KEY`. Perplexity server search runs through OpenRouter and needs no separate Perplexity key. Direct vendor integrations are no longer bundled.
 
@@ -128,9 +130,7 @@ The combined `all` role is the default for local use. The `api` role accepts run
 
 Standalone Docker, split Compose with libSQL/Valkey, and Cloudflare deployment instructions are in [deploy/README.md](deploy/README.md). Cloudflare uses Worker ingress and Queues with the native Node application in a Container, backed by Durable Object SQLite for research records and D1 for Mastra workflow metadata. Its repair Cron dispatches already accepted work; it does not schedule new research experiments.
 
-Workspace-scoped storage and execution authorization/settlement hooks provide a foundation for a hosted service. The CLI uses one trusted `WORKSPACE_ID`; customer authentication, account provisioning, subscriptions, and billing are not implemented. A hosted integration must resolve workspace identity before constructing the service and supply its own authorization policy.
-
-See [the hosted service boundary](docs/hosted-service.md) for prepaid credits, authenticated workspace routing, and settlement responsibilities.
+The supplied deployments serve one trusted operator workspace using provider credentials from your environment. They include no managed accounts, wallets, payment processing, or customer fees. The [hosted service boundary](docs/hosted-service.md) describes how an external application can consume the public SDK and supply optional authorization and execution hooks. Managed account APIs and operator configuration belong to the private repository.
 
 ## Verification
 
@@ -157,3 +157,7 @@ Each suite defaults to reserving $2 for the external agent and $1 for applicatio
 ## License
 
 [Apache License 2.0](LICENSE).
+
+## Container releases and security
+
+The [container release guide](deploy/README.md#published-images) documents GHCR tags, Linux AMD64/ARM64 support, immutable digests, and the one-time package visibility setting. Managed service images and deployment remain in the private `opensenpai-web` repository. See [SECURITY.md](SECURITY.md) for secret scanning, dependency monitoring, and the remaining assessed transitive advisory.

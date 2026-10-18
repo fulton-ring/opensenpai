@@ -316,6 +316,7 @@ export class ObservationExecutor {
           observation.prompt.queries ?? [observation.prompt.text],
           this.options.providers,
         ),
+        retrievalAuthorization(observation, id, this.options.providers),
       ))
     )
       return this.waitForRetrieval(id, signal);

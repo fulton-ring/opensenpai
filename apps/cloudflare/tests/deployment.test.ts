@@ -37,6 +37,10 @@ describe("Cloudflare deployment delivery", () => {
         MCP_AUTH_TOKEN: "mcp-secret",
         INTERNAL_EXECUTION_TOKEN: "internal-secret",
         CUSTOM_TARGET_KEY: "provider-secret",
+        PROVIDER_API_KEY_ENVS: "CUSTOM_TARGET_KEY",
+        CLERK_SECRET_KEY: "clerk-secret",
+        STRIPE_SECRET_KEY: "stripe-secret",
+        MPP_SECRET_KEY: "payment-secret",
         APPLICATION: { secret: "must not stringify service binding" },
         OBSERVATION_DISPATCH_MODE: "all",
       }),
@@ -132,7 +136,7 @@ describe("Cloudflare deployment delivery", () => {
     expect(paths).toEqual(["/internal/observations/outbox"]);
   });
 
-  it("does not expose internal execution or forward unauthenticated MCP traffic", async () => {
+  it("does not expose internal execution or forward unauthenticated research traffic", async () => {
     let forwarded = false;
     const env = environment(async () => {
       forwarded = true;
@@ -143,7 +147,10 @@ describe("Cloudflare deployment delivery", () => {
         .status,
     ).toBe(404);
     expect((await handleRequest(new Request("https://example.com/mcp"), env)).status).toBe(401);
-    for (const path of ["/research", "/d1", "/internal/storage", "/sql"]) {
+    expect(
+      (await handleRequest(new Request("https://example.com/api/v1/research/runs"), env)).status,
+    ).toBe(401);
+    for (const path of ["/research", "/d1", "/billing", "/internal/storage", "/sql"]) {
       for (const host of ["example.com", "cloudflare-storage"]) {
         expect(
           (
@@ -184,6 +191,51 @@ describe("Cloudflare deployment delivery", () => {
     );
     expect(await response.json()).toEqual({ native: true });
     expect(paths).toEqual(["/mcp", "/internal/observations/outbox"]);
+  });
+
+  it.each(["GET", "POST", "PATCH"])(
+    "forwards authenticated research %s and dispatches only mutations",
+    async (method) => {
+      const paths: string[] = [];
+      const env = environment(async (request) => {
+        const path = new URL(request.url).pathname;
+        paths.push(path);
+        return path === "/api/v1/research/runs"
+          ? Response.json({ research: true })
+          : Response.json({ observations: [] });
+      });
+      const response = await handleRequest(
+        new Request("https://example.com/api/v1/research/runs", {
+          method,
+          headers: { authorization: "Bearer mcp-test-token" },
+        }),
+        env,
+      );
+      expect(await response.json()).toEqual({ research: true });
+      expect(paths).toEqual([
+        "/api/v1/research/runs",
+        ...(method === "GET" ? [] : ["/internal/observations/outbox"]),
+      ]);
+    },
+  );
+
+  it("leaves accepted REST mutations durable when queue dispatch fails", async () => {
+    const env = environment(async (request) =>
+      new URL(request.url).pathname === "/api/v1/research/runs"
+        ? Response.json({ accepted: true })
+        : new Response(null, { status: 503 }),
+    );
+    const response = await handleRequest(
+      new Request("https://example.com/api/v1/research/runs", {
+        method: "PATCH",
+        headers: { authorization: "Bearer mcp-test-token" },
+      }),
+      env,
+    );
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: "Queue unavailable; accepted work is persisted for retry",
+    });
   });
 
   it("configures single bounded consumption and a dead letter queue", async () => {

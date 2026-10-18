@@ -5,7 +5,6 @@ RUN npm install --global pnpm@10.30.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json ./packages/core/package.json
 COPY apps/server/package.json ./apps/server/package.json
-COPY apps/cloudflare/package.json ./apps/cloudflare/package.json
 
 FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS build
 # TypeScript emits portable JavaScript; compile on the builder's native architecture.
@@ -14,8 +13,7 @@ RUN npm install --global pnpm@10.30.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/core/package.json ./packages/core/package.json
 COPY apps/server/package.json ./apps/server/package.json
-COPY apps/cloudflare/package.json ./apps/cloudflare/package.json
-# Root development tools build only the server and its core dependency.
+# Build the standalone research server.
 RUN pnpm install --frozen-lockfile --filter @opensenpai/server... --filter .
 COPY tsconfig*.json turbo.json ./
 COPY packages/core ./packages/core

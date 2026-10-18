@@ -52,7 +52,7 @@ function environment(env: Environment) {
   return { ...env, APPLICATION: getContainer(env.APPLICATION, "opensenpai") };
 }
 
-/** Worker ingress, queue consumption, and dispatch repair for the hosted service. */
+/** Worker ingress, queue consumption, and dispatch repair for the standalone research service. */
 export default {
   fetch(request: Request, env: Environment): Promise<Response> {
     return handleRequest(request, environment(env));

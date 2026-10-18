@@ -11,6 +11,7 @@ import {
   type RunEstimate,
   type RunInput,
   type RunRecord,
+  type SpendAuthorization,
   type Target,
 } from "../contracts.js";
 import type { ResearchClient, ResearchConnection, TransactionRunner } from "./client.js";
@@ -26,6 +27,9 @@ import {
   writeObservation,
 } from "./records.js";
 import { migrations } from "./schema.js";
+import { enqueueSettlement, type SettlementEvent, zeroUsage } from "./settlements.js";
+
+export type { SettlementEvent } from "./settlements.js";
 
 /** Inject a clock or native transaction runner without changing research state semantics. */
 export interface StoreOptions {
@@ -257,6 +261,27 @@ export class ResearchStore {
     return this.pending(limit, false);
   }
 
+  /** List durable billing deliveries in their committed evidence order. */
+  async listPendingSettlements(limit = 100): Promise<SettlementEvent[]> {
+    return selectData<SettlementEvent>(
+      this.client,
+      "app_settlements",
+      this.workspaceId,
+      "ORDER BY rowid LIMIT ?",
+      [Math.max(1, Math.min(limit, 1000))],
+    );
+  }
+
+  /** Acknowledge only one successfully delivered event within this workspace. */
+  async ackSettlement(id: string): Promise<void> {
+    await this.transaction(async (tx) => {
+      await tx.execute({
+        sql: "DELETE FROM app_settlements WHERE workspace_id=? AND id=?",
+        args: [this.workspaceId, id],
+      });
+    });
+  }
+
   async listUnqueued(limit = 100, runId?: string) {
     return this.pending(limit, true, runId);
   }
@@ -409,7 +434,10 @@ export class ResearchStore {
       sql: "INSERT INTO app_usage(workspace_id,attempt_id,run_id,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,attempt_id) DO NOTHING",
       args,
     });
-    if (inserted.rowsAffected) return true;
+    if (inserted.rowsAffected) {
+      await enqueueSettlement(tx, this.workspaceId, attemptId, runId, data, false);
+      return true;
+    }
     const previous = await tx.execute({
       sql: "SELECT json_extract(data,'$.outcome') outcome FROM app_usage WHERE workspace_id=? AND attempt_id=?",
       args: [this.workspaceId, attemptId],
@@ -423,7 +451,9 @@ export class ResearchStore {
       sql: "INSERT INTO app_usage_reconciliations(workspace_id,attempt_id,run_id,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,attempt_id) DO NOTHING",
       args,
     });
-    return corrected.rowsAffected > 0;
+    if (!corrected.rowsAffected) return false;
+    await enqueueSettlement(tx, this.workspaceId, attemptId, runId, data, true);
+    return true;
   }
 
   private async touchRun(tx: ResearchConnection, id: string) {
@@ -497,7 +527,7 @@ export class ResearchStore {
         outcome,
         actual,
         actual !== null || unbilled,
-        partialResult?.usage ?? null,
+        partialResult?.usage ?? (unbilled ? zeroUsage() : null),
       );
     });
   }
@@ -587,7 +617,7 @@ export class ResearchStore {
         dispatched ? "unknown_outcome" : "not_dispatched",
         null,
         !dispatched,
-        null,
+        dispatched ? null : zeroUsage(),
       );
   }
 
@@ -611,6 +641,7 @@ export class ResearchStore {
     owner: string,
     leaseMs: number,
     estimatedCost: number,
+    authorization?: SpendAuthorization,
   ): Promise<boolean> {
     return this.transaction(async (tx) => {
       if ((await selectData(tx, "app_retrievals", this.workspaceId, "AND id=?", [id])).length)
@@ -620,13 +651,14 @@ export class ResearchStore {
       if (run.cancel_requested) throw new ResearchError("cancelled", "Retrieval run was cancelled");
       if (!(await this.reserve(tx, `retrieval:${id}`, run, estimatedCost)))
         throw new ResearchError("BUDGET_EXCEEDED", "Run budget cannot reserve this retrieval");
-      const record: RetrievalRecord = {
+      const record: RetrievalRecord & { authorization?: SpendAuthorization } = {
         id,
         status: "running",
         owner,
         lease_until: new Date(this.clock().getTime() + leaseMs).toISOString(),
         bundle: null,
         error: null,
+        ...(authorization ? { authorization } : {}),
       };
       await tx.execute({
         sql: "INSERT INTO app_retrievals(workspace_id,id,run_id,data) VALUES(?,?,?,?)",

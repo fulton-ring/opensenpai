@@ -19,6 +19,9 @@ export const migrations = [
   `CREATE TABLE IF NOT EXISTS app_usage_reconciliations (
     workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL, run_id TEXT NOT NULL,
     data TEXT NOT NULL, PRIMARY KEY(workspace_id,attempt_id))`,
+  `CREATE TABLE IF NOT EXISTS app_settlements (
+    workspace_id TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+    PRIMARY KEY(workspace_id,id))`,
   `CREATE TABLE IF NOT EXISTS app_retrievals (
     workspace_id TEXT NOT NULL, id TEXT NOT NULL, run_id TEXT NOT NULL, data TEXT NOT NULL,
     PRIMARY KEY(workspace_id,id))`,

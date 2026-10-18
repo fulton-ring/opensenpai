@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
 import { LibSQLStore } from "@mastra/libsql";
-import { ResearchError } from "@opensenpai/core/contracts";
+import { ResearchError, type RunEstimate } from "@opensenpai/core/contracts";
 import { createRuntime, type RuntimeOptions } from "@opensenpai/core/runtime";
 import { ResearchService } from "@opensenpai/core/service";
 import { type ResearchStorage, ResearchStore } from "@opensenpai/core/storage";
@@ -32,6 +32,8 @@ export type CreateApplicationOptions = ApplicationOptions &
     | "storage"
   > & {
     bridgeFetch?: BridgeFetch;
+    getBalance?: () => Promise<unknown>;
+    authorizeRun?: (estimate: RunEstimate) => Promise<void>;
   };
 async function ensureParent(url: string) {
   if (!url.startsWith("file:") || url.includes(":memory:")) return;
@@ -73,15 +75,19 @@ export async function createApplication(
     providers,
     env,
     dispatchMode: config.dispatchMode,
+    authorizeRun: options.authorizeRun,
   });
-  const mcp = createResearchMcp(service);
+  const mcp = createResearchMcp(
+    service,
+    options.getBalance ? { getBalance: options.getBalance } : undefined,
+  );
   runtime.mastra.addMCPServer(mcp, "aeo");
   let server: Server | undefined;
   const close = createCloser(runtime, mcp, nativeStorage, store, () => server);
   try {
     await store.initialize();
     await runtime.start();
-    server = await startTransport(config, store, runtime, mcp, options.listen);
+    server = await startTransport(config, store, runtime, mcp, service, options.listen);
     return {
       store,
       runtime,
@@ -171,6 +177,7 @@ async function startTransport(
   store: ResearchStorage,
   runtime: ReturnType<typeof createRuntime>,
   mcp: ReturnType<typeof createResearchMcp>,
+  service: ResearchService,
   listen?: boolean,
 ) {
   if (listen !== false) {
@@ -180,6 +187,7 @@ async function startTransport(
         store,
         runtime,
         mcp,
+        service,
         role: config.role,
         mcpToken: config.mcpToken,
         internalToken: config.internalToken,

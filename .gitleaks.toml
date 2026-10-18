@@ -1,0 +1,18 @@
+title = "OpenSenpai secrets"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "exa-api-key"
+description = "Exa API key assigned in configuration"
+regex = '''(?i)\bEXA_API_KEY\b["']?\s*[:=]\s*["']?([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'''
+secretGroup = 1
+keywords = ["EXA_API_KEY", "exa_api_key"]
+
+[[allowlists]]
+description = "Public documentation idempotency fixture, not a credential"
+condition = "AND"
+paths = ['(^|/)docs/provider-plugins\.md$']
+regexTarget = "line"
+regexes = ['^\s*"idempotency_key":\s*"comparison-001",?\s*$']

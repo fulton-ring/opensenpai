@@ -9,6 +9,50 @@ import {
 import type { ProviderRegistry } from "../providers/types.js";
 import { retrievalEstimate } from "../targets.js";
 import type { RuntimeOptions } from "./types.js";
+
+const delivering = new WeakMap<RuntimeOptions, Promise<void>>();
+
+async function deliverPending(
+  options: RuntimeOptions,
+  attempt?: SpendAuthorization,
+): Promise<void> {
+  const { store } = options;
+  if (!store.listPendingSettlements || !store.ackSettlement) return;
+  for (let batch = 0; batch < 10; batch++) {
+    const events = (await store.listPendingSettlements(1000)).filter(
+      (event) =>
+        !attempt ||
+        (event.attempt.attempt_id === attempt.attempt_id &&
+          event.attempt.operation === attempt.operation),
+    );
+    if (!events.length) return;
+    for (const event of events) {
+      await options.hooks?.settled?.(event.attempt, event.outcome, event.usage);
+      await store.ackSettlement(event.id);
+    }
+  }
+}
+
+/** Retry committed settlement evidence without reexecuting any paid operation. */
+export async function drainSettlements(
+  options: RuntimeOptions,
+  attempt?: SpendAuthorization,
+): Promise<void> {
+  if (!options.store.listPendingSettlements || !options.store.ackSettlement) return;
+  const active = delivering.get(options);
+  if (active) {
+    await active;
+    return drainSettlements(options, attempt);
+  }
+  const delivery = deliverPending(options, attempt).catch((error) => reportError(options, error));
+  delivering.set(options, delivery);
+  try {
+    await delivery;
+  } finally {
+    delivering.delete(options);
+  }
+}
+
 /** Build a shared-retrieval spend request using the configured adapter estimate. */
 export function retrievalAuthorization(
   observation: Observation,
@@ -86,6 +130,10 @@ export async function settleSpend(
   outcome: ObservationStatus,
   usage: Usage | null,
 ): Promise<void> {
+  if (options.store.listPendingSettlements && options.store.ackSettlement) {
+    await drainSettlements(options, attempt);
+    return;
+  }
   try {
     await options.hooks?.settled?.(attempt, outcome, usage);
   } catch (error) {

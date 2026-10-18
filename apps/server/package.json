@@ -24,5 +24,16 @@
     "@mastra/mcp": "2.4.1",
     "@opensenpai/core": "workspace:*",
     "zod": "4.6.7"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    "./application": "./dist/application.js",
+    "./config": "./dist/config.js",
+    "./provider-config": "./dist/provider-config.js",
+    "./mcp": "./dist/mcp.js",
+    "./http": "./dist/http.js",
+    "./cloudflare-storage": "./dist/cloudflare-storage.js"
   }
 }

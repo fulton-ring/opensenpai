@@ -110,3 +110,42 @@ it("preserves remote research failures without retrying initialization", async (
   ).rejects.toMatchObject(new ResearchError("STORAGE_UNAVAILABLE", "durable failure", true));
   expect(requests).toBe(1);
 });
+
+it("uses only research storage bridges by default, without account coupling", async () => {
+  const f = bridgeFixture();
+  let app: Awaited<ReturnType<typeof createApplication>> | undefined;
+  try {
+    app = await createApplication(
+      { ...env, HOSTED_ACCOUNT_ID: "unrelated-account" },
+      {
+        bridgeFetch: f.bridgeFetch,
+        listen: false,
+        storage: new LibSQLStore({ id: "generic-cloudflare", url: ":memory:" }),
+        providers: {
+          models: {
+            local: {
+              availability: () => ({ available: true }),
+              execute: async () => {
+                throw new Error("External dispatch only");
+              },
+            },
+          },
+          retrievals: {},
+        },
+        targets: [{ id: "local", transport: "local", model: "local", search: { mode: "off" } }],
+      },
+    );
+    expect(app.mcp.getToolInfo("get_balance")).toBeUndefined();
+    const result = await app.service.startRun({
+      prompts: [{ id: "p", text: "Question?" }],
+      targets: ["local"],
+      idempotency_key: "generic-cloudflare-run",
+    });
+    expect(result.created).toBe(true);
+    expect(f.requests.every(({ url }) => url === "http://cloudflare-storage/research")).toBe(true);
+  } finally {
+    await app?.close();
+    await f.research.close();
+    f.d1.close();
+  }
+});

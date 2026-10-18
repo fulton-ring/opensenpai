@@ -9,9 +9,10 @@ import type {
   RetrievalBundle,
   RetrievalRecord,
   RunRecord,
+  SpendAuthorization,
 } from "../contracts.js";
-
 import type { ProviderRegistry, RetrievalInput } from "../providers/types.js";
+import type { SettlementEvent } from "../storage/settlements.js";
 
 /** The runtime uses the persistence boundary, never a process-local job lock, to authorize work. */
 export interface RuntimeStore {
@@ -33,6 +34,8 @@ export interface RuntimeStore {
   ): Promise<void>;
   cancelRun(id: string): Promise<unknown>;
   recoverExpired(): Promise<unknown>;
+  listPendingSettlements?(limit?: number): Promise<SettlementEvent[]>;
+  ackSettlement?(id: string): Promise<void>;
   setRetrieval?(observationId: string, retrievalId: string): Promise<void>;
   getRetrieval(id: string): Promise<RetrievalRecord | null>;
   claimRetrieval(
@@ -41,6 +44,7 @@ export interface RuntimeStore {
     owner: string,
     leaseMs: number,
     estimatedCost: number,
+    authorization?: SpendAuthorization,
   ): Promise<boolean>;
   finishRetrieval(bundle: RetrievalBundle, owner: string, runId: string): Promise<void>;
   failRetrieval(

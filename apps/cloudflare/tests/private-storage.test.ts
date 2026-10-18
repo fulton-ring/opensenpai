@@ -141,6 +141,25 @@ describe("private Cloudflare storage bridge", () => {
 });
 
 describe("research RPC dispatch", () => {
+  it("lists and acknowledges durable settlement events through the private research RPC", async () => {
+    const events = [{ id: "settlement-1", attempt_id: "attempt-1", actual_cost: 0.01 }];
+    const acknowledged: string[] = [];
+    const rpc = createResearchRpc({
+      async initialize() {},
+      async listPendingSettlements() {
+        return events;
+      },
+      async ackSettlement(id: string) {
+        acknowledged.push(id);
+      },
+    } as unknown as ResearchStorage);
+    expect(await rpc({ method: "listPendingSettlements", args: [] })).toEqual({ result: events });
+    expect(await rpc({ method: "ackSettlement", args: ["settlement-1"] })).toEqual({
+      result: null,
+    });
+    expect(acknowledged).toEqual(["settlement-1"]);
+  });
+
   it("awaits a single initialization before concurrent operations and preserves receiver", async () => {
     let finish = () => {};
     const events: string[] = [];

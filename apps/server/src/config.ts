@@ -46,7 +46,7 @@ export function loadConfig(
   if (storageBackend === "cloudflare" && (role !== "api" || dispatchMode !== "external"))
     throw new ResearchError(
       "INVALID_CONFIG",
-      "Cloudflare storage requires role api and external dispatch in the hosted container.",
+      "Cloudflare storage requires role api and external dispatch.",
     );
   const mcpToken = env.MCP_AUTH_TOKEN;
   const internalToken = env.INTERNAL_EXECUTION_TOKEN;

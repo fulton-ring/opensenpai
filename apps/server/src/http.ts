@@ -2,12 +2,14 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { MCPServer } from "@mastra/mcp";
 import type { Observation } from "@opensenpai/core/contracts";
-import type { ServiceStore } from "@opensenpai/core/service";
+import type { ResearchService, ServiceStore } from "@opensenpai/core/service";
 import { publicError } from "./mcp.js";
+import { researchRoutes } from "./rest/routes.js";
 
 /** Dependencies and access policies for MCP, health, and internal observation HTTP routes. */
 export interface HttpOptions {
   mcp?: Pick<MCPServer, "startHTTP">;
+  service?: ResearchService;
   store: Pick<ServiceStore, "getRun" | "getResults"> & {
     listToolCalls(runId?: string): Promise<unknown[]>;
     listUnqueued(limit?: number): Promise<Observation[]>;
@@ -15,7 +17,7 @@ export interface HttpOptions {
     markQueued(id: string): Promise<void>;
     getObservation(id: string): Promise<Observation | null>;
   };
-  runtime: { executeObservation(id: string): Promise<unknown> };
+  runtime: { executeObservation(id: string): Promise<unknown>; retrySettlements?(): Promise<void> };
   role: "all" | "api" | "worker";
   mcpToken?: string;
   internalToken?: string;
@@ -85,29 +87,40 @@ async function handle(
     return json(res, 503, { error: { code: "SERVER_BUSY", message: "Retry shortly." } });
   const url = requestUrl(req, res, hosts, origins);
   if (!url) return;
-  if (!limitBody(req, res)) return;
+  const research = url.pathname.startsWith("/api/v1/research");
+  if (!research && !limitBody(req, res)) return;
   if (req.method === "GET" && ["/health", "/ready"].includes(url.pathname)) {
     return health(options, req, res, url.pathname === "/ready");
   }
   const execution = url.pathname.startsWith("/internal/observations/");
   if (!authorized(req, execution ? options.internalToken : options.mcpToken))
     return json(res, 401, { error: { code: "UNAUTHORIZED" } });
-  if (url.pathname === "/mcp" && options.mcp && options.role !== "worker") {
-    if (
-      req.method === "POST" &&
-      !req.headers["content-type"]?.toLowerCase().startsWith("application/json")
-    )
-      return json(res, 415, { error: { code: "JSON_REQUIRED" } });
-    await options.mcp.startHTTP({
-      url,
-      httpPath: "/mcp",
-      req,
-      res,
-      options: { enableDnsRebindingProtection: true, allowedHosts: hosts },
-    });
-    return;
-  }
+  if (research && options.service && options.role !== "worker")
+    return researchRoutes(options.service, req, res, url);
+  if (url.pathname === "/mcp" && options.mcp && options.role !== "worker")
+    return nativeMcp(options.mcp, hosts, req, res, url);
   return routes(options, req, res, url);
+}
+
+async function nativeMcp(
+  mcp: NonNullable<HttpOptions["mcp"]>,
+  hosts: string[],
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+) {
+  if (
+    req.method === "POST" &&
+    !req.headers["content-type"]?.toLowerCase().startsWith("application/json")
+  )
+    return json(res, 415, { error: { code: "JSON_REQUIRED" } });
+  await mcp.startHTTP({
+    url,
+    httpPath: "/mcp",
+    req,
+    res,
+    options: { enableDnsRebindingProtection: true, allowedHosts: hosts },
+  });
 }
 
 function limitBody(req: IncomingMessage, res: ServerResponse) {
@@ -134,6 +147,7 @@ async function routes(options: HttpOptions, req: IncomingMessage, res: ServerRes
     });
   if (req.method === "GET" && url.pathname === "/internal/observations/outbox") {
     await options.store.recoverExpired();
+    await options.runtime.retrySettlements?.();
     return json(res, 200, {
       observations: (await options.store.listUnqueued(100)).map(({ id }) => ({ id })),
     });

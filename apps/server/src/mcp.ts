@@ -92,8 +92,27 @@ const listInput = z
   })
   .strict();
 
+function accountTools(account?: {
+  getBalance: () => Promise<unknown>;
+}): NonNullable<ConstructorParameters<typeof MCPServer>[0]["tools"]> {
+  return account
+    ? {
+        get_balance: tool(
+          "get_balance",
+          "Read the balance supplied by the server operator.",
+          z.object({}).strict(),
+          true,
+          () => account.getBalance(),
+        ),
+      }
+    : {};
+}
+
 /** Expose discovery and bounded experiments over the native Mastra MCP transport. */
-export function createResearchMcp(service: ResearchService) {
+export function createResearchMcp(
+  service: ResearchService,
+  account?: { getBalance: () => Promise<unknown> },
+) {
   return new MCPServer({
     id: "opensenpai",
     name: "OpenSenpai Research",
@@ -101,6 +120,7 @@ export function createResearchMcp(service: ResearchService) {
     instructions:
       "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to estimate_run/start_run; named presets are optional. No code edits are needed to choose a model. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
     tools: {
+      ...accountTools(account),
       list_targets: tool(
         "list_targets",
         "Discover registered model/retrieval providers and optional presets. Supply provider/model_query to read a provider's model catalog. No paid generation or search is performed.",

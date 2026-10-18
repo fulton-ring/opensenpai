@@ -82,14 +82,15 @@ export async function dispatchOutbox(env: DeploymentEnvironment): Promise<void> 
   }
 }
 
-/** Route authenticated MCP requests while keeping storage and execution routes private. */
+/** Route authenticated research requests while keeping storage and execution routes private. */
 export async function handleRequest(
   request: Request,
   env: DeploymentEnvironment,
 ): Promise<Response> {
   const { pathname } = new URL(request.url);
   if (pathname === "/health" || pathname === "/ready") return env.APPLICATION.fetch(request);
-  if (pathname !== "/mcp") return new Response("Not found", { status: 404 });
+  if (pathname !== "/mcp" && !pathname.startsWith("/api/v1/research/"))
+    return new Response("Not found", { status: 404 });
   if (
     !env.MCP_AUTH_TOKEN ||
     request.headers.get("authorization") !== `Bearer ${env.MCP_AUTH_TOKEN}`
@@ -97,7 +98,7 @@ export async function handleRequest(
     return new Response("Unauthorized", { status: 401 });
   }
   const response = await env.APPLICATION.fetch(request);
-  if (request.method === "POST") {
+  if (request.method === "POST" || request.method === "PATCH") {
     try {
       await dispatchOutbox(env);
     } catch {
@@ -111,20 +112,36 @@ export async function handleRequest(
   return response;
 }
 
-/** Forward provider credentials while retaining account and database bindings in the Worker. */
+/** Forward explicitly allowed provider credentials while retaining infrastructure bindings. */
 export function applicationEnvironment(bindings: Record<string, unknown>): Record<string, string> {
   if (!bindings.MCP_AUTH_TOKEN || !bindings.INTERNAL_EXECUTION_TOKEN) {
     throw new Error("MCP_AUTH_TOKEN and INTERNAL_EXECUTION_TOKEN secrets are required");
   }
-  // String bindings include arbitrary target api_key_env names without forwarding service bindings.
-  const values = Object.fromEntries(
-    Object.entries(bindings).filter(
-      (entry): entry is [string, string] =>
-        typeof entry[1] === "string" &&
-        !/^(DATABASE_URL|DATABASE_AUTH_TOKEN|MASTRA_STORAGE_URL|MASTRA_STORAGE_AUTH_TOKEN|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|CLOUDFLARE_API_KEY|CF_API_KEY)$/.test(
-          entry[0],
-        ),
+  const runtime = [
+    "MCP_AUTH_TOKEN",
+    "INTERNAL_EXECUTION_TOKEN",
+    "WORKSPACE_ID",
+    "MCP_ALLOWED_HOSTS",
+    "MCP_ALLOWED_ORIGINS",
+    "TARGETS_JSON",
+    "OPENSENPAI_CONFIG",
+    "OPENROUTER_API_KEY",
+    "EXA_API_KEY",
+  ];
+  const configured =
+    typeof bindings.PROVIDER_API_KEY_ENVS === "string"
+      ? bindings.PROVIDER_API_KEY_ENVS.split(",").map((name) => name.trim())
+      : [];
+  const keys = [
+    ...runtime,
+    ...configured.filter(
+      (name) =>
+        /^[A-Z][A-Z0-9_]*$/.test(name) &&
+        !/^(CLERK_|STRIPE_|MPP_|HOSTED_|DATABASE_|MASTRA_|CLOUDFLARE_|CF_)/.test(name),
     ),
+  ];
+  const values = Object.fromEntries(
+    keys.flatMap((key) => (typeof bindings[key] === "string" ? [[key, bindings[key]]] : [])),
   );
   return {
     ...values,

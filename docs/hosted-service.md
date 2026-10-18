@@ -1,19 +1,32 @@
 # Hosted service boundary
 
-The open-source core executes research and records evidence. The shipped Cloudflare deployment serves one operator workspace using bearer authentication and BYOK credentials. It is not yet a customer billing service.
+The public OpenSenpai repository provides the research engine, provider configuration, MCP and REST transports, durable storage, and optional integration hooks. Self-hosted deployments use one trusted `WORKSPACE_ID` and operator-supplied provider credentials. They require no customer account, wallet, payment provider, or service fees; provider usage is charged directly to the operator's accounts.
 
-A paid deployment can keep the same seven MCP tools and research workflows. Its additional responsibilities are:
+The managed service lives in the separate private repository `../opensenpai-web`. Its web frontend, account gateway, identity adapters, wallets, payment processing, promotional credits, and tenant routing are maintained and deployed there. Its operator guide is `../opensenpai-web/docs/hosted-service.md`. No private package or frontend export is required to build, test, or deploy this public repository.
 
-1. Authenticate the customer and resolve a trusted workspace. Never accept the workspace identity directly from tool arguments or an unverified header.
-2. Accept prepaid purchases through a payment provider. Verify webhook signatures and apply each payment event once to an append-only credit ledger.
-3. Supply execution hooks that atomically reserve credits before a model or shared retrieval operation. Use the operation's stable attempt ID as the idempotency key.
-4. Settle the reservation using immutable usage records and a versioned customer price. Refund unused reservations only when the outcome is known. Retain holds for ambiguous outcomes until reconciliation.
-5. Apply account rate limits and spending policies, and provide balance, purchase history, and usage views.
+## Public SDK and transports
 
-Use integer credit units for the wallet. Research records distinguish provider-reported dollars, estimates, and unknown costs; those records are evidence for billing rather than a complete financial ledger. Repeated settlement notifications must reconcile the same attempt rather than create a second charge.
+`@opensenpai/core` exposes research contracts, provider adapters, workspace-scoped storage, the research service, and the execution runtime. `@opensenpai/server` provides Node application composition and MCP/REST transport integration. Applications can consume these public SDK packages without copying the research engine into their own repositories. See the [API and SDK contract](api.md) for package entry points, request shapes, authentication, and pagination.
 
-Storage queries and run idempotency are workspace-scoped. The current CLI constructs one workspace-bound store and service. A hosted identity layer must construct or select the correct workspace-bound service after authentication. The supplied Cloudflare Worker currently routes to one named container; customer routing and account provisioning must be added before offering shared paid hosting.
+The standalone HTTP server exposes seven research tools at `/mcp` and REST resources under `/api/v1/research`. Both use the configured operator bearer token. The public service does not expose managed account, credential-management, wallet, purchase, or payment endpoints. Research scheduling and synthesis remain the calling agent's responsibility.
 
-Workers handle authentication, MCP ingress, and queue delivery; a hosted extension can add purchase webhooks. Containers run the native Node/Mastra application. Durable Object SQLite stores durable research state; D1 stores native Mastra workflow metadata. A future wallet can use its own Cloudflare transaction boundary and append-only ledger. Queues contain observation IDs, never prompts or provider credentials. Existing compare-and-set claims prevent duplicate delivery from repeating a paid operation.
+Provider configuration stays in `opensenpai.config.mjs` and `config/providers/`, or a trusted module selected through `OPENSENPAI_CONFIG` or `--config`. Provider credentials come from environment variables. This configuration works independently of any managed service; see [provider configuration](provider-plugins.md).
 
-Research scheduling stays with the customer's agent. Infrastructure repair only recovers and dispatches previously accepted work.
+## Optional integration hooks
+
+An embedding application resolves a trusted workspace before constructing a research service. Tool arguments and unverified request headers must not choose a different customer's workspace. The supplied single-operator CLI uses its configured `WORKSPACE_ID`; a multi-tenant host owns authentication, tenant routing, and account policy.
+
+The runtime accepts optional `ExecutionHooks`:
+
+- `authorize(attempt)` runs before a paid model or shared-retrieval operation. A host can reject work or reserve its own allowance using the workspace, run, observation, and stable attempt identifiers.
+- `settled(attempt, outcome, usage)` delivers durable execution evidence to the host. Reconcile by operation and attempt identity so repeated delivery cannot apply a charge twice. Shared retrieval uses its shared bundle identifier and should be accounted for once.
+
+These callbacks carry research usage evidence; they do not implement a wallet, payment rail, signup grant, or price policy. The default runtime has no customer billing behavior when hooks are absent. A host that adds financial accounting owns its ledger, authorization policy, payment verification, and reconciliation.
+
+Estimated costs and reported usage remain distinct. Unknown prices or outcomes require an explicit host policy; missing usage must not be treated as known zero cost. `max_estimated_cost_usd` gates estimated spend before dispatch and does not guarantee the upstream provider's final charge. Preserve uncertain attempts and reconcile their evidence before deliberately submitting replacement paid work.
+
+## Deployment boundary
+
+The public Docker and Cloudflare profiles deploy the research service for one operator workspace. Cloudflare uses Worker ingress and Queues, a native Node/Mastra Container, Durable Object SQLite research storage, and D1 workflow metadata. Infrastructure repair dispatches already accepted work; it does not create scheduled experiments. See [deployment instructions](../deploy/README.md).
+
+Managed identity, account/payment APIs, customer routing, and web hosting belong to the private deployment. Their secrets and environment configuration are not part of the public CLI or deployment examples.

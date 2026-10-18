@@ -24,6 +24,8 @@ export const RESEARCH_METHODS = [
   "fail",
   "cancelRun",
   "recoverExpired",
+  "listPendingSettlements",
+  "ackSettlement",
   "getRetrieval",
   "claimRetrieval",
   "finishRetrieval",

@@ -14,3 +14,13 @@ artifacts/
 coverage/
 *.log
 .DS_Store
+
+# Local credentials and databases, wherever an operator puts them.
+*.pem
+*.key
+*.p12
+*.pfx
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
