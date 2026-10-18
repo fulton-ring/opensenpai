@@ -213,3 +213,44 @@ it("rejects resolvers that silently change the requested model, adapter or searc
   expect(f.generated).toEqual([]);
   expect(await f.store.listRuns()).toEqual([]);
 });
+it("preserves caller execution limits, reasoning and an explicit serving provider during pricing resolution", async () => {
+  const f = await fixture();
+  const adapter = f.providers.models.compatible;
+  const selection = {
+    ...inline,
+    max_output_tokens: 128,
+    timeout_ms: 2_000,
+    temperature: 0.2,
+    reasoning_effort: "none",
+  };
+  for (const changes of [
+    { max_output_tokens: 256 },
+    { timeout_ms: 3_000 },
+    { temperature: 0.8 },
+    { reasoning_effort: "low" },
+    { location: "different" },
+    { provider_options: { provider: "substitute" } },
+    { provider_options: undefined },
+  ]) {
+    Object.assign(f.providers.models, {
+      compatible: {
+        ...adapter,
+        resolveTarget: async (target: Target) => ({ ...target, ...changes }),
+      },
+    });
+    await expect(f.service.estimateRun({ ...input, targets: [selection] })).rejects.toMatchObject({
+      code: "INVALID_TARGET_RESOLUTION",
+    });
+  }
+  expect(f.generated).toEqual([]);
+  expect(f.retrievals()).toBe(0);
+  expect(await f.store.listRuns()).toEqual([]);
+});
+
+it("rejects catalog limits above the MCP maximum before requesting provider metadata", async () => {
+  const f = await fixture();
+  await expect(f.service.listTargets({ provider: "compatible", limit: 51 })).rejects.toMatchObject({
+    code: "INVALID_DISCOVERY_QUERY",
+  });
+  expect(f.metadataQueries).toEqual([]);
+});

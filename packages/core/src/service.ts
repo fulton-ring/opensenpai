@@ -15,17 +15,20 @@ import { defaultProviders } from "./providers/index.js";
 import type { ProviderRegistry } from "./providers/types.js";
 import { estimateRun, targetAvailability } from "./targets.js";
 
+/** Optional provider catalog query; omitting it lists configured adapters without network requests. */
 export interface TargetDiscoveryQuery {
   provider?: string;
   model_query?: string;
   limit?: number;
 }
+/** Workspace run filters and opaque pagination cursor accepted by the persistence boundary. */
 export interface RunPageQuery {
   project?: string;
   limit?: number;
   before?: string;
   cursor?: string;
 }
+/** Durable, workspace-scoped run operations required by MCP research tools and their audit trail. */
 export interface ServiceStore {
   createRun(
     input: RunInput,
@@ -42,10 +45,12 @@ export interface ServiceStore {
   cancelRun(id: string): Promise<RunRecord | null>;
   recordToolCall(tool: string, runId?: string): Promise<void>;
 }
+/** Execution boundary for submitting accepted observations and propagating run cancellation. */
 export interface ServiceRuntime {
   dispatch(observations: Observation[]): Promise<void>;
   cancel(runId: string): Promise<void>;
 }
+/** Trusted operator configuration shared by run validation, pricing resolution and execution. */
 export interface ServiceOptions {
   store: ServiceStore;
   runtime: ServiceRuntime;
@@ -56,6 +61,7 @@ export interface ServiceOptions {
 }
 const terminal = (run: RunRecord) => !["queued", "running"].includes(run.status);
 
+/** Validates agent research requests, resolves provider metadata and persists accepted work before dispatch. */
 export class ResearchService {
   constructor(readonly options: ServiceOptions) {}
 
@@ -97,14 +103,16 @@ export class ResearchService {
           await adapter.resolveTarget(structuredClone(target), { env: this.options.env, fetch }),
         );
         if (
-          resolved.id !== target.id ||
-          resolved.transport !== target.transport ||
-          resolved.model !== target.model ||
-          !isDeepStrictEqual(resolved.search, target.search)
+          !isDeepStrictEqual(
+            { ...target, pricing: undefined, provider_options: undefined },
+            { ...resolved, pricing: undefined, provider_options: undefined },
+          ) ||
+          (target.provider_options?.provider !== undefined &&
+            resolved.provider_options?.provider !== target.provider_options.provider)
         )
           throw new ResearchError(
             "INVALID_TARGET_RESOLUTION",
-            "Model metadata resolver changed the requested target identity or search selection",
+            "Model metadata resolver changed the requested configuration or explicit serving provider",
           );
         return resolved;
       }),
@@ -128,10 +136,10 @@ export class ResearchService {
         `Provider '${id}' does not expose a model catalog`,
       );
     const limit = query.limit ?? 20;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+    if (!Number.isInteger(limit) || limit < 1 || limit > 50)
       throw new ResearchError(
         "INVALID_DISCOVERY_QUERY",
-        "Model discovery limit must be between 1 and 100",
+        "Model discovery limit must be between 1 and 50",
       );
     return {
       model_provider: id,
@@ -142,6 +150,7 @@ export class ResearchService {
     };
   }
 
+  /** Discover adapters, optional model metadata and recent observed capabilities; never generates text. */
   async listTargets(query: TargetDiscoveryQuery = {}) {
     await this.options.store.recordToolCall("list_targets");
     const models = await this.discoverModels(query);
@@ -160,12 +169,14 @@ export class ResearchService {
     };
   }
 
+  /** Resolve inline selections and estimate their bounded cost without accepting or dispatching paid work. */
   async estimateRun(value: unknown) {
     await this.options.store.recordToolCall("estimate_run");
     const input = runInputSchema.parse(value);
     return estimateRun(input, await this.selected(input), this.options.providers);
   }
 
+  /** Validate availability and budget, persist an idempotent run, then submit its pending observations. */
   async startRun(value: unknown) {
     const saved = await this.createValidatedRun(value).catch(async (error: unknown) => {
       await this.options.store.recordToolCall("start_run");
@@ -206,6 +217,7 @@ export class ResearchService {
     return this.options.store.createRun(input, targets, estimate);
   }
 
+  /** Read a workspace run, optionally waiting briefly for its persisted state to change. */
   async getRun({
     run_id,
     wait_ms = 1_000,
@@ -225,6 +237,7 @@ export class ResearchService {
     return run;
   }
 
+  /** Return paginated durable observations; raw provider evidence is omitted unless explicitly requested. */
   async getResults(query: ResultQuery) {
     await this.options.store.recordToolCall("get_results", query.run_id);
     await this.requireRun(query.run_id);
@@ -235,11 +248,13 @@ export class ResearchService {
     });
   }
 
+  /** List workspace runs using the store's stable opaque pagination cursor. */
   async listRuns(query: RunPageQuery = {}) {
     await this.options.store.recordToolCall("list_runs");
     return this.options.store.listRunPage({ ...query, limit: query.limit ?? 25 });
   }
 
+  /** Persist cancellation before signalling active execution; upstream cancellation remains best effort. */
   async cancelRun({ run_id }: { run_id: string }) {
     await this.options.store.recordToolCall("cancel_run", run_id);
     const run = await this.options.store.cancelRun(run_id);
