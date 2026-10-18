@@ -3,6 +3,7 @@ FROM node:24-bookworm-slim AS base
 WORKDIR /app
 RUN npm install --global pnpm@10.30.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/core/package.json ./packages/core/package.json
 COPY apps/server/package.json ./apps/server/package.json
 
@@ -11,6 +12,7 @@ FROM --platform=$BUILDPLATFORM node:24-bookworm-slim AS build
 WORKDIR /app
 RUN npm install --global pnpm@10.30.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY patches ./patches
 COPY packages/core/package.json ./packages/core/package.json
 COPY apps/server/package.json ./apps/server/package.json
 # Build the standalone research server.

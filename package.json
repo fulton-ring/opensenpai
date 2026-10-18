@@ -48,6 +48,9 @@
     ],
     "overrides": {
       "@hono/node-server": "1.19.17"
+    },
+    "patchedDependencies": {
+      "@mastra/mcp@2.4.1": "patches/@mastra__mcp@2.4.1.patch"
     }
   }
 }

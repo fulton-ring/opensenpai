@@ -1,0 +1,26 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 944e44a7ca23d12ebe8182704183ae9d270e0894..599927550f844efd7402802062909e1b6ee3027c 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -27500,7 +27500,7 @@ var MCPServer = class extends _mastra_core_mcp.MCPServerBase {
+ 	getNodeHandler() {
+ 		if (!this.nodeHandler) {
+ 			this.httpHandler = (0, _modelcontextprotocol_server.createMcpHandler)(() => this.createServerInstance(), {
+-				legacy: "reject",
++				legacy: "stateless",
+ 				onerror: (error) => this.logger.error("MCP handler error", { error: error.toString() })
+ 			});
+ 			this.nodeHandler = (0, _modelcontextprotocol_node.toNodeHandler)(this.httpHandler, { onerror: (error) => this.logger.error("MCP Node handler adapter error", { error: error.toString() }) });
+diff --git a/dist/index.js b/dist/index.js
+index b33b42cc972229d8470ec81649f49aa22434fa27..1cb2a91747802d67a9deb5545de43312c0c061e1 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -27479,7 +27479,7 @@ var MCPServer = class extends MCPServerBase {
+ 	getNodeHandler() {
+ 		if (!this.nodeHandler) {
+ 			this.httpHandler = createMcpHandler(() => this.createServerInstance(), {
+-				legacy: "reject",
++				legacy: "stateless",
+ 				onerror: (error) => this.logger.error("MCP handler error", { error: error.toString() })
+ 			});
+ 			this.nodeHandler = toNodeHandler(this.httpHandler, { onerror: (error) => this.logger.error("MCP Node handler adapter error", { error: error.toString() }) });

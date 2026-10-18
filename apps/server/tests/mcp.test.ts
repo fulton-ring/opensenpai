@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { ResearchError } from "@opensenpai/core/contracts";
 import type { ResearchService } from "@opensenpai/core/service";
 import { describe, expect, it } from "vitest";
@@ -80,3 +82,66 @@ describe("native MCP tools", () => {
     await mcp.close();
   });
 });
+
+it.each(["2025-03-26", "2025-06-18", "2025-11-25"])(
+  "serves the %s handshake and tools through the native HTTP transport",
+  async (protocolVersion) => {
+    const mcp = createResearchMcp(service());
+    const server = createServer((req, res) => {
+      void mcp.startHTTP({
+        url: new URL(req.url ?? "/", "http://localhost"),
+        httpPath: "/mcp",
+        req,
+        res,
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const endpoint = `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`;
+    async function rpc(method: string, params: unknown = {}, id: number | undefined = 1) {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...(protocolVersion === "2025-03-26" ? {} : { "mcp-protocol-version": protocolVersion }),
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+      });
+      const text = await response.text();
+      const data = text.startsWith("event:")
+        ? text
+            .split("\n")
+            .find((line) => line.startsWith("data: "))
+            ?.slice(6)
+        : text;
+      return { status: response.status, body: data ? JSON.parse(data) : null };
+    }
+    try {
+      expect(
+        await rpc("initialize", {
+          protocolVersion,
+          capabilities: {},
+          clientInfo: { name: "claude-compatible-test", version: "1.0.0" },
+        }),
+      ).toMatchObject({ status: 200, body: { result: { protocolVersion } } });
+      expect(await rpc("tools/list")).toMatchObject({
+        status: 200,
+        body: {
+          result: {
+            tools: expect.arrayContaining([expect.objectContaining({ name: "list_targets" })]),
+          },
+        },
+      });
+      expect(await rpc("tools/call", { name: "list_targets", arguments: {} })).toMatchObject({
+        status: 200,
+        body: {
+          result: { content: [{ type: "text", text: expect.stringContaining('"targets":[]') }] },
+        },
+      });
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await mcp.close();
+    }
+  },
+);

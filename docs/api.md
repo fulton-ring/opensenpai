@@ -89,3 +89,7 @@ Install both tarballs in a consumer and resolve `@opensenpai/core` to the matchi
 For Node composition, `createApplication(env, options)` from `@opensenpai/server/application` loads trusted configuration/providers, creates storage and the Mastra runtime, and exposes `service`, `runtime`, `store`, `mcp`, and `close()`. Set `transport: "http"` to serve HTTP; `listen: false` permits embedding without opening a listener. The research service methods are `listTargets`, `estimateRun`, `startRun`, `getRun`, `getResults`, `listRuns`, and `cancelRun`.
 
 Optional `authorizeRun`, `ExecutionHooks.authorize`, and `ExecutionHooks.settled` let a host apply its own policy and reconcile usage. They do not add customer billing by default. The host must resolve trusted workspace identity before constructing the application. See the [hosted service boundary](hosted-service.md) for integration responsibilities and [provider configuration](provider-plugins.md) for model adapters.
+
+## MCP protocol compatibility
+
+HTTP serves the 2025 initialize handshake and the 2026 self-contained protocol through the native SDK. A version-pinned pnpm patch in `patches/` switches Mastra 2.4.1's hardcoded HTTP `legacy: "reject"` to the SDK's `legacy: "stateless"`. Tool definitions, validation, execution, and authorization stay shared. Both ESM and CommonJS builds are patched; Docker copies the patch before dependency installation. Downstream package-manager roots must apply this patch too until Mastra exposes the setting. Stdio retains Mastra's default protocol.
