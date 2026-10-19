@@ -69,14 +69,14 @@ describe("native HTTP research resources", () => {
     });
   });
 
-  it("estimates and persists idempotent runs without executing providers", async () => {
+  it("persists idempotent runs without exposing forecast costs or executing providers", async () => {
     const estimate = await api("/estimates", "POST", input);
-    expect(estimate.status).toBe(200);
-    expect(await estimate.json()).toMatchObject({ total_observations: 1 });
+    expect(estimate.status).toBe(404);
     const created = await api("/runs", "POST", input);
     expect(created.status).toBe(201);
     const result = (await created.json()) as { run: { id: string }; created: boolean };
     expect(result.created).toBe(true);
+    expect(result.run).not.toHaveProperty("estimated_cost_usd");
     expect(created.headers.get("location")).toBe(`/api/v1/research/runs/${result.run.id}`);
     const replay = await api("/runs", "POST", input);
     expect(replay.status).toBe(200);
@@ -137,7 +137,6 @@ describe("native HTTP research resources", () => {
 
   it.each([
     ["/targets", "POST", "GET"],
-    ["/estimates", "GET", "POST"],
     ["/runs", "DELETE", "GET, POST"],
     ["/runs/missing", "POST", "GET, PATCH"],
     ["/runs/missing/observations", "PATCH", "GET"],
@@ -222,4 +221,19 @@ describe("native HTTP research resources", () => {
     expect(response.status).toBe(500);
     expect(await response.text()).not.toContain("SECRET_PROVIDER_CREDENTIAL");
   });
+});
+
+it("keeps reservation calculation behind the internal execution credential", async () => {
+  const endpoint = `${base}/internal/observations/reservation`;
+  const invoke = (authorization: string) =>
+    fetch(endpoint, {
+      method: "POST",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  expect((await invoke(`Bearer ${token}`)).status).toBe(401);
+  const response = await invoke("Bearer research-internal-token-long-enough");
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ total_observations: 1 });
+  expect(execute).not.toHaveBeenCalled();
 });

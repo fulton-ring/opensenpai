@@ -300,6 +300,32 @@ function responseProof(
   );
 }
 
+function intrinsicSonarProof(
+  response: Record<string, unknown>,
+  target: Target,
+  selected: Endpoint | null,
+) {
+  const metadata = obj(response.openrouter_metadata);
+  return (
+    sonar(target) &&
+    target.search.mode === "native" &&
+    selected?.providerName === "Perplexity" &&
+    response.provider === "Perplexity" &&
+    response.model === target.model &&
+    metadata.requested === target.model &&
+    metadata.strategy === "direct" &&
+    metadata.attempt === 1 &&
+    responseEngines(response).every((engine) => engine === "native") &&
+    arr(response.choices).some((choice) =>
+      arr(obj(obj(choice).message).annotations).some(
+        (annotation) =>
+          obj(annotation).type === "url_citation" &&
+          /^https?:\/\//.test(str(obj(obj(annotation).url_citation).url) ?? ""),
+      ),
+    )
+  );
+}
+
 function searchProof(
   response: Record<string, unknown>,
   generation: Record<string, unknown> | null,
@@ -319,6 +345,7 @@ function searchProof(
   if (responseEngines(response).some((value) => value !== engine)) return false;
   return (
     responseProof(response, target, selected, engine) ||
+    intrinsicSonarProof(response, target, selected) ||
     (generation?.model === target.model &&
       generation?.provider_name === selected?.providerName &&
       generation?.web_search_engine === engine)
@@ -366,12 +393,18 @@ async function verify(
     responses.every((response, i) =>
       searchProof(response, items[i] ?? null, input.target, selected, expectedEngine),
     );
-  if ((result.usage.search_requests ?? 0) <= 0 || !proved)
+  const intrinsic =
+    responses.length > 0 &&
+    responses.every((response) => intrinsicSonarProof(response, input.target, selected));
+  const searched =
+    (result.usage.search_requests ?? 0) > 0 || (result.usage.search_requests === null && intrinsic);
+  if (!searched || !proved)
     throw new ProviderResponseError(
       "search_proof_failed",
       "Search execution, engine, model or serving provider could not be verified",
       result,
     );
+  if (intrinsic) result.search_activity.engine = "native";
   result.search_activity.observed = "executed";
   return result;
 }

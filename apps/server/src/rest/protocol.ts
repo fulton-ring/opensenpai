@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ResearchError } from "@opensenpai/core/contracts";
 import { z } from "zod";
-import { publicError } from "../mcp.js";
+import { publicError, publicResearchResult } from "../mcp.js";
 
 /** Maximum accepted JSON body, measured as received bytes. */
 export const MAX_BODY = 1_048_576;
@@ -13,7 +13,7 @@ export function json(res: ServerResponse, status: number, value: unknown) {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
   });
-  res.end(JSON.stringify(value));
+  res.end(JSON.stringify(publicResearchResult(value)));
 }
 
 /** Map research failures to HTTP statuses while hiding unexpected implementation errors. */

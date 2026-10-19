@@ -7,7 +7,6 @@ import { errorResponse, json, MAX_BODY, query, readJson } from "./protocol.js";
 const root = "/api/v1/research";
 const methods = new Map([
   [`${root}/targets`, "GET"],
-  [`${root}/estimates`, "POST"],
   [`${root}/runs`, "GET, POST"],
 ]);
 /** Dispatch authenticated research resources directly to the shared service. */
@@ -49,7 +48,6 @@ async function collection(
   if (Object.keys(fields).length)
     throw new ResearchError("INVALID_INPUT", "This resource does not accept query parameters.");
   const input = await readJson(req);
-  if (url.pathname === `${root}/estimates`) return json(res, 200, await service.estimateRun(input));
   const result = await service.startRun(input);
   if (result.created)
     res.setHeader("location", `${root}/runs/${encodeURIComponent(result.run.id)}`);

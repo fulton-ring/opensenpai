@@ -49,12 +49,11 @@ describe("native MCP tools", () => {
       await mcp.close();
     }
   });
-  it("advertises exactly seven research tools with bounded inputs and no execution escape hatch", async () => {
+  it("advertises exactly six research tools with bounded inputs and no execution escape hatch", async () => {
     const mcp = createResearchMcp(service());
     const list = await mcp.getToolListInfo();
     expect(list.tools.map((tool) => tool.name).sort()).toEqual([
       "cancel_run",
-      "estimate_run",
       "get_results",
       "get_run",
       "list_runs",
@@ -145,3 +144,50 @@ it.each(["2025-03-26", "2025-06-18", "2025-11-25"])(
     }
   },
 );
+
+it("omits forecast costs while retaining actual charges and source evidence", async () => {
+  const research = service();
+  research.getResults = async () =>
+    ({
+      observations: [
+        {
+          estimated_cost_usd: 0.2,
+          result: {
+            answer: "Evidence",
+            citations: [{ url: "https://example.com/cited" }],
+            sources: [{ url: "https://example.com/retrieved" }],
+            usage: { reported_cost_usd: 0.01, estimated_cost_usd: 0.02 },
+            raw_response: { estimated_cost_usd: 0.03 },
+          },
+        },
+      ],
+    }) as never;
+  const mcp = createResearchMcp(research);
+  try {
+    const result = await mcp.executeTool("get_results", { run_id: "run-1" });
+    expect(result).toMatchObject({
+      output: {
+        observations: [
+          {
+            result: {
+              citations: [{ url: "https://example.com/cited" }],
+              sources: [{ url: "https://example.com/retrieved" }],
+              usage: { reported_cost_usd: 0.01 },
+              raw_response: { estimated_cost_usd: 0.03 },
+            },
+          },
+        ],
+      },
+    });
+    if (!("output" in result)) throw new Error("Expected completed MCP result");
+    const observations = (
+      result.output as {
+        observations: { estimated_cost_usd?: number; result: { usage: object } }[];
+      }
+    ).observations;
+    expect(observations[0]).not.toHaveProperty("estimated_cost_usd");
+    expect(observations[0]?.result.usage).not.toHaveProperty("estimated_cost_usd");
+  } finally {
+    await mcp.close();
+  }
+});

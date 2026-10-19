@@ -54,7 +54,7 @@ describe("application composition", () => {
       });
       try {
         const tools = await client.listTools();
-        expect(Object.keys(tools)).toHaveLength(7);
+        expect(Object.keys(tools)).toHaveLength(6);
         expect(tools.research_list_targets).toBeDefined();
         const targetList = await tools.research_list_targets?.execute?.(
           {},

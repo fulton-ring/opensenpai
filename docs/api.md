@@ -11,7 +11,6 @@ REST requests and responses use JSON. POST and PATCH bodies require `Content-Typ
 | Resource | MCP equivalent | Request and response |
 | --- | --- | --- |
 | `GET /api/v1/research/targets` | `list_targets` | Optional `provider`, `model_query`, and `limit` (1–50, default 20). Returns `model_providers`, `retrieval_providers`, configured `targets`, and optional `model_provider`/`models` discovery data. |
-| `POST /api/v1/research/estimates` | `estimate_run` | Run input below. Returns `total_observations`, estimated model/retrieval costs, `unpriced_targets`, and per-observation estimates; no paid generation or search. |
 | `POST /api/v1/research/runs` | `start_run` | Run input below. Returns `{run, created}`: 201 plus a relative `Location` when created; 200 on an identical idempotent replay. |
 | `GET /api/v1/research/runs` | `list_runs` | Optional `project`, `limit` (1–100, default 25), opaque `cursor`, or legacy `before` timestamp. Returns `{runs, next_cursor}`. |
 | `GET /api/v1/research/runs/:id` | `get_run` | Optional `wait_ms` (0–10000, REST default 0). Returns the run record directly; a wait ends on change, terminal state, or timeout. |
@@ -20,13 +19,13 @@ REST requests and responses use JSON. POST and PATCH bodies require `Content-Typ
 
 Follow each returned `next_cursor` until null. Run-list cursors are opaque strings; observation cursors are ordinal numbers. Do not interchange them. A run has aggregate status `queued`, `running`, `succeeded`, `partial`, `failed`, or `cancelled`; individual observations can also have `unknown_outcome`.
 
-MCP uses the seven tool names above at `/mcp`, with `run_id` in read/cancel tool arguments. MCP `get_run` defaults to a 1000 ms wait. See the [agent connection examples](../README.md#connect-an-agent).
+MCP uses the six tool names above at `/mcp`, with `run_id` in read/cancel tool arguments. MCP `get_run` defaults to a 1000 ms wait. See the [agent connection examples](../README.md#connect-an-agent).
 
 ## Selecting models and search
 
-Discover available adapters with `GET /api/v1/research/targets`. Add `?provider=openrouter&model_query=glm&limit=10` to query its model catalog. Discovery and estimation can make read-only metadata requests, but do not generate paid answers. Choose model IDs from discovery rather than assuming a catalog entry is still available.
+Discover available adapters with `GET /api/v1/research/targets`. Add `?provider=openrouter&model_query=glm&limit=10` to query its model catalog. Discovery can make read-only metadata requests, but do not generate paid answers. Choose model IDs from discovery rather than assuming a catalog entry is still available.
 
-POST the same request shape to `estimates` and `runs`:
+POST this request to `runs`:
 
 ```json
 {
@@ -61,7 +60,7 @@ Search choices are:
 
 `max_uses` is 1–3; `max_results` is 1–10. Prompts require unique IDs and text of at most 8000 characters. A run accepts 1–25 prompts, 1–10 unique targets, and 1–5 repetitions, with at most 100 total observations. `repetitions` defaults to 1 and `locale` to `en-US`. The required idempotency key is 1–160 characters and scoped to the trusted workspace. Reusing it with changed input returns a conflict.
 
-Estimates distinguish missing prices from known zero. `max_estimated_cost_usd` must be positive and at most 1000; it rejects unpriced or over-budget starts, but cannot guarantee the provider's final charge. Preserve unknown outcomes before deliberately retrying paid work. Normal observation responses retain normalized answers, citations, usage, and provenance. `include_raw=true` also returns full source text, provider payloads, and metadata.
+Cost forecasts are not exposed through MCP or REST. Internal reservations distinguish missing prices from known zero, and results retain provider-reported charges. `max_estimated_cost_usd` must be positive and at most 1000; it rejects unpriced or over-budget starts, but cannot guarantee the provider's final charge. Preserve unknown outcomes before deliberately retrying paid work. Normal observation responses retain normalized answers, citations, usage, and provenance. `include_raw=true` also returns full source text, provider payloads, and metadata.
 
 ## Errors
 
