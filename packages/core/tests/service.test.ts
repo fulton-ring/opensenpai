@@ -128,6 +128,21 @@ describe("run service boundaries", () => {
     });
     expect(test.creates()).toBe(0);
   });
+  it.each(["perplexity/sonar", "openai/gpt-test:online"])(
+    "rejects invalid model/search combination %s before storing even with a tiny budget",
+    async (model) => {
+      const test = setup();
+      const service = new ResearchService({
+        ...test.service.options,
+        targets: [{ ...target, model }],
+      });
+      await expect(
+        service.startRun({ ...input, max_estimated_cost_usd: 0.000000001 }),
+      ).rejects.toMatchObject({ code: "TARGET_UNAVAILABLE" });
+      expect(test.creates()).toBe(0);
+      expect(test.dispatched).toEqual([]);
+    },
+  );
   it("does not re-enqueue observations already submitted on an idempotent retry", async () => {
     const test = setup();
     await test.service.startRun(input);
@@ -135,12 +150,23 @@ describe("run service boundaries", () => {
     expect(test.dispatched).toHaveLength(1);
     expect(test.dispatched[0]?.map(({ id }) => id)).toEqual(["observation-1"]);
   });
-  it("rejects over-budget estimates before storage", async () => {
+  it("accepts batch estimates above the incremental budget and preserves it on idempotent retries", async () => {
     const test = setup();
+    const batch = { ...input, repetitions: 2 };
+    const estimate = await test.service.estimateRun(batch);
+    const perObservation = estimate.observations[0]?.estimated_cost_usd;
+    if (perObservation === null || perObservation === undefined) throw new Error("Missing price");
+    const capped = { ...batch, max_estimated_cost_usd: perObservation };
+    const first = await test.service.startRun(capped);
+    expect(first.created).toBe(true);
+    expect(first.run.estimated_cost_usd).toBeGreaterThan(capped.max_estimated_cost_usd);
+    expect(first.run.input).toEqual(capped);
+    expect(await test.service.startRun(capped)).toEqual({ run: first.run, created: false });
+    expect(test.creates()).toBe(1);
+    expect(test.dispatched).toHaveLength(1);
     await expect(
-      test.service.startRun({ ...input, max_estimated_cost_usd: 0.000000001 }),
-    ).rejects.toMatchObject({ code: "BUDGET_EXCEEDED" });
-    expect(test.creates()).toBe(0);
+      test.service.startRun({ ...capped, max_estimated_cost_usd: perObservation * 2 }),
+    ).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
   });
   it("reports observed search and citation capabilities from durable completed results", async () => {
     const test = setup();

@@ -9,6 +9,7 @@ import {
   runInputSchema,
   targetSchema,
 } from "../src/contracts.js";
+import { ResearchService } from "../src/service.js";
 import { ResearchStore } from "../src/storage/index.js";
 
 const target = targetSchema.parse({
@@ -300,28 +301,72 @@ it("retains immutable usage history while reconciling late actual charges", asyn
   });
 });
 
-it("reserves concurrent observations against the same run budget atomically", async () => {
+it("admits an oversized batch and reserves concurrent claims against actual spend plus held cost", async () => {
   const a = await store();
   const b = await store();
-  const { run } = await a.createRun(
-    { ...input, repetitions: 2, max_estimated_cost_usd: 0.15 },
-    [target],
-    {
-      ...estimate,
-      total_observations: 2,
-      observations: [
-        { prompt_id: "p", target_id: "t", repetition: 0, estimated_cost_usd: 0.1 },
-        { prompt_id: "p", target_id: "t", repetition: 1, estimated_cost_usd: 0.1 },
-      ],
-    },
-  );
-  const rows = (await a.getResults({ run_id: run.id })).observations;
+  const service = new ResearchService({
+    store: a,
+    targets: [
+      {
+        ...target,
+        transport: "openrouter",
+        max_output_tokens: 1_000,
+        pricing: { input_per_million: 0, output_per_million: 100, search_per_request: 0 },
+      },
+    ],
+    env: { OPENROUTER_API_KEY: "fixture" },
+    dispatchMode: "external",
+    runtime: { dispatch: async () => {}, cancel: async () => {} },
+  });
+  const { run } = await service.startRun({
+    ...input,
+    repetitions: 4,
+    max_estimated_cost_usd: 0.32,
+  });
+  expect(run.estimated_cost_usd).toBe(0.4);
+  expect(run.input.max_estimated_cost_usd).toBe(0.32);
+  const [first, held, ...rows] = (await a.getResults({ run_id: run.id })).observations;
+  if (!first || !held) throw new Error("Missing observations");
+  const claim = await a.claim(first.id, "worker");
+  if (!claim?.attempt_id) throw new Error("Missing attempt");
+  await a.markDispatched(first.id, claim.attempt_id);
+  await a.succeed(first.id, claim.attempt_id, {
+    ...result,
+    usage: { ...result.usage, reported_cost_usd: 0.08 },
+  });
+  expect(await a.claim(held.id, "worker")).not.toBeNull();
   const claims = await Promise.all(
     rows.map((item, index) => (index ? b : a).claim(item.id, "worker")),
   );
   expect(claims.filter(Boolean)).toHaveLength(1);
-  expect((await a.getRun(run.id))?.reserved_cost_usd).toBe(0.1);
+  expect(await a.getRun(run.id)).toMatchObject({ reported_cost_usd: 0.08, reserved_cost_usd: 0.2 });
+  expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(3);
 });
+
+it.each([
+  { cap: 0.000000001, cost: 0.1 },
+  { cap: 1, cost: null },
+])(
+  "denies unaffordable or unknown estimates without paid attempts (cap $cap, cost $cost)",
+  async ({ cap, cost }) => {
+    const a = await store();
+    const { run } = await a.createRun({ ...input, max_estimated_cost_usd: cap }, [target], {
+      ...estimate,
+      estimated_cost_usd: cost,
+      observations: [{ prompt_id: "p", target_id: "t", repetition: 0, estimated_cost_usd: cost }],
+    });
+    const [item] = (await a.getResults({ run_id: run.id })).observations;
+    if (!item) throw new Error("Missing observation");
+    expect(await a.claim(item.id, "worker")).toBeNull();
+    expect(await a.getObservation(item.id)).toMatchObject({
+      status: "failed",
+      attempt_id: null,
+      error: { code: "BUDGET_EXCEEDED" },
+    });
+    expect(await a.getRun(run.id)).toMatchObject({ reported_cost_usd: 0, reserved_cost_usd: 0 });
+    expect((await a.client.execute("SELECT id FROM app_attempts")).rows).toHaveLength(0);
+  },
+);
 
 it("records failed attempts once and releases only a known non-dispatched reservation", async () => {
   const a = await store();
