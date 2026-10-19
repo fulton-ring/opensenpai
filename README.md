@@ -71,19 +71,18 @@ For stdio, let the client launch its own combined server. Use absolute paths bec
 
 Stdio needs no HTTP bearer token. Use a separate local database for each application process; do not point multiple running servers at the same writable file.
 
-## Research through seven tools
+## Research through six tools
 
 | Tool | Purpose |
 | --- | --- |
 | `list_targets` | Discover installed adapters/models and inspect optional presets and observed capabilities. |
-| `estimate_run` | Resolve model metadata and calculate observation counts and estimated spend without paid calls. |
 | `start_run` | Persist and dispatch an accepted experiment. |
 | `get_run` | Read status and counts; `wait_ms` can wait up to 10 seconds for a change. |
 | `get_results` | Retrieve paginated observations; raw provider payloads are opt-in. |
 | `list_runs` | Find recent runs, optionally filtered by project. |
 | `cancel_run` | Stop pending observations and request cancellation of active work. |
 
-For example, ask an agent: “Use OpenSenpai to evaluate Fulton Ring's public AI-readiness services. Discover models, select a model with controlled Exa retrieval, estimate one observation, start it only within the budget, then retrieve and summarize its sources and limitations.” The `estimate_run` and `start_run` arguments have the same shape:
+For example, ask an agent: “Use OpenSenpai to evaluate Fulton Ring's public AI-readiness services. Discover models, select a model with controlled Exa retrieval, start one observation within the authorized budget, then retrieve and summarize its sources and limitations.” The `start_run` arguments are:
 
 ```json
 {

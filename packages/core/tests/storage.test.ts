@@ -772,3 +772,24 @@ it("releases an explicitly undispatched retrieval reservation without inventing 
     reported_cost_usd: 0,
   });
 });
+
+it("recovers stale queue deliveries only before any execution attempt", async () => {
+  const a = await store();
+  const row = await observation(a);
+  await a.markQueued(row.id);
+  await a.recoverExpired();
+  expect(await a.listUnqueued()).toEqual([]);
+  now += 300_001;
+  await a.recoverExpired();
+  expect((await a.listUnqueued()).map((value) => value.id)).toEqual([row.id]);
+  await a.markQueued(row.id);
+  await a.recoverExpired();
+  expect(await a.listUnqueued()).toEqual([]);
+  const claimed = await a.claim(row.id, "worker", 600_000);
+  if (!claimed?.attempt_id) throw new Error("Expected claimed observation");
+  await a.markDispatched(row.id, claimed.attempt_id);
+  now += 300_001;
+  await a.recoverExpired();
+  expect(await a.listUnqueued()).toEqual([]);
+  expect((await a.getObservation(row.id))?.attempt_id).toBe(claimed?.attempt_id);
+});

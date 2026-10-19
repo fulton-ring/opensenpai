@@ -310,6 +310,10 @@ export class ResearchStore {
 
   async markQueued(id: string) {
     await this.transaction(async (tx) => {
+      const row = await this.observation(tx, id);
+      if (!row || row.status !== "pending") return;
+      row.updated_at = this.now();
+      await writeObservation(tx, row);
       await tx.execute({
         sql: "UPDATE app_observations SET queued=1 WHERE workspace_id=? AND id=?",
         args: [this.workspaceId, id],
@@ -370,7 +374,7 @@ export class ResearchStore {
         status: "running",
         owner,
         attempt_id: attemptId,
-        lease_until: new Date(this.clock().getTime() + leaseMs).toISOString(),
+        lease_until: new Date(Date.parse(this.now()) + leaseMs).toISOString(),
         dispatched_at: null,
         updated_at: this.now(),
       });
@@ -555,6 +559,11 @@ export class ResearchStore {
 
   async recoverExpired(): Promise<number> {
     return this.transaction(async (tx) => {
+      // A queue acknowledgement is not execution. Redispatch stale, never-claimed work safely.
+      const redelivery = await tx.execute({
+        sql: "UPDATE app_observations SET queued=0 WHERE workspace_id=? AND queued=1 AND json_extract(data,'$.status')='pending' AND json_extract(data,'$.attempt_id') IS NULL AND json_extract(data,'$.dispatched_at') IS NULL AND json_extract(data,'$.updated_at')<=?",
+        args: [this.workspaceId, new Date(Date.parse(this.now()) - 300_000).toISOString()],
+      });
       const rows = await selectData<Observation>(
         tx,
         "app_observations",
@@ -581,7 +590,7 @@ export class ResearchStore {
           },
           true,
         );
-      return rows.length + retrievals.length;
+      return rows.length + retrievals.length + redelivery.rowsAffected;
     });
   }
 
@@ -655,7 +664,7 @@ export class ResearchStore {
         id,
         status: "running",
         owner,
-        lease_until: new Date(this.clock().getTime() + leaseMs).toISOString(),
+        lease_until: new Date(Date.parse(this.now()) + leaseMs).toISOString(),
         bundle: null,
         error: null,
         ...(authorization ? { authorization } : {}),

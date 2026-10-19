@@ -28,7 +28,7 @@ it("serves native stdio without bearer auth or stdout log contamination", async 
   });
   try {
     const tools = await client.listTools();
-    expect(Object.keys(tools)).toHaveLength(7);
+    expect(Object.keys(tools)).toHaveLength(6);
     expect(await tools.research_list_runs?.execute?.({}, { observe: noopObserve })).toMatchObject({
       runs: [],
     });

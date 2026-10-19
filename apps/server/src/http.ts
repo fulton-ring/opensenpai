@@ -4,6 +4,7 @@ import type { MCPServer } from "@mastra/mcp";
 import type { Observation } from "@opensenpai/core/contracts";
 import type { ResearchService, ServiceStore } from "@opensenpai/core/service";
 import { publicError } from "./mcp.js";
+import { readJson } from "./rest/protocol.js";
 import { researchRoutes } from "./rest/routes.js";
 
 /** Dependencies and access policies for MCP, health, and internal observation HTTP routes. */
@@ -141,6 +142,12 @@ function limitBody(req: IncomingMessage, res: ServerResponse) {
 }
 
 async function routes(options: HttpOptions, req: IncomingMessage, res: ServerResponse, url: URL) {
+  if (
+    req.method === "POST" &&
+    url.pathname === "/internal/observations/reservation" &&
+    options.service
+  )
+    return json(res, 200, await options.service.estimateRun(await readJson(req)));
   if (req.method === "GET" && url.pathname === "/internal/audit")
     return json(res, 200, {
       toolCalls: await options.store.listToolCalls(url.searchParams.get("run_id") ?? undefined),

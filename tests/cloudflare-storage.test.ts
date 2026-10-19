@@ -100,7 +100,7 @@ it("persists MCP results and native Mastra metadata in real Cloudflare SQL store
       },
     });
     const tools = await client.listTools();
-    expect(Object.keys(tools)).toHaveLength(7);
+    expect(Object.keys(tools)).toHaveLength(6);
     const input = {
       prompts: [{ id: "p", text: "Fulton Ring research fixture" }],
       targets: ["fixture"],

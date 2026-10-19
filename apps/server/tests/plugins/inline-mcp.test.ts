@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { noopObserve } from "@mastra/core/tools";
 import { MCPClient } from "@mastra/mcp";
-import type { Observation, RunEstimate, RunRecord } from "@opensenpai/core/contracts";
+import type { Observation, RunRecord } from "@opensenpai/core/contracts";
 import {
   createOpenAICompatibleProvider,
   createProviderRegistry,
@@ -192,7 +192,7 @@ it("runs inline models with one shared controlled retrieval through authenticate
       idempotency_key: "inline-http-mcp",
       max_estimated_cost_usd: 0.1,
     };
-    const invalid = await invoke("estimate_run", {
+    const invalid = await invoke("start_run", {
       ...input,
       targets: [{ ...input.targets[0], pricing: { input_per_million: 0, output_per_million: 0 } }],
     });
@@ -201,7 +201,7 @@ it("runs inline models with one shared controlled retrieval through authenticate
       message: expect.stringContaining("additional properties"),
     });
     expect(gateway.calls).toHaveLength(0);
-    const estimate = await invoke<RunEstimate>("estimate_run", input);
+    const estimate = await app.service.estimateRun(input);
     expect(estimate.total_observations).toBe(2);
     expect(estimate.retrieval_estimated_cost_usd).toBe(0.02);
     expect(estimate.unpriced_targets).toEqual([]);

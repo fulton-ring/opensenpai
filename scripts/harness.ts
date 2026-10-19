@@ -4,7 +4,6 @@ import { writeFile } from "node:fs/promises";
 /** Native MCP tools required in both the agent transcript and the server audit for acceptance. */
 export const REQUIRED_TOOLS = [
   "list_targets",
-  "estimate_run",
   "start_run",
   "get_run",
   "get_results",

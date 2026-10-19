@@ -1,6 +1,6 @@
 # Provider configuration and MCP model selection
 
-Agents select models and search separately through `estimate_run` and `start_run`. The bundled registry contains the `openrouter` model adapter and `exa` controlled retrieval adapter. There are no built-in target presets.
+Agents select models and search separately through `start_run`. The bundled registry contains the `openrouter` model adapter and `exa` controlled retrieval adapter. There are no built-in target presets.
 
 ```json
 {

@@ -15,15 +15,7 @@ const native = (tool: string, id = tool, input = {}) => ({
   type: "assistant",
   message: { content: [{ type: "tool_use", id, name: `mcp__aeo__${tool}`, input }] },
 });
-const tools = [
-  "list_targets",
-  "estimate_run",
-  "start_run",
-  "get_run",
-  "get_results",
-  "list_runs",
-  "cancel_run",
-];
+const tools = ["list_targets", "start_run", "get_run", "get_results", "list_runs", "cancel_run"];
 const transcript = (events: unknown[]) => events.map((event) => JSON.stringify(event)).join("\n");
 
 describe("real agent evidence", () => {
@@ -328,7 +320,7 @@ it("runs deterministic CLI fixtures through HTTP verification and persists faile
     expect(gatewayReport.allowances).toEqual({ agentUsd: 2, appUsd: 1 });
     await writeFile(
       cli,
-      `#!${process.execPath}\nconst fs=require("node:fs");const args=process.argv;const budget=args[args.indexOf("--max-budget-usd")+1];const prompt=args[args.indexOf("-p")+1];const ledger=JSON.parse(fs.readFileSync(${JSON.stringify(join(artifactDir, "cumulative-spend.json"))},"utf8"));const entry=ledger.entries.at(-1);if(budget!=="0.4"||!prompt.includes('"max_estimated_cost_usd":0.2')||!prompt.includes("exceeds $0.2")||entry.agentAllowance!==0.4||entry.appAllowance!==0.2)process.exit(9);process.stdout.write(${JSON.stringify(transcript(events))});\n`,
+      `#!${process.execPath}\nconst fs=require("node:fs");const args=process.argv;const budget=args[args.indexOf("--max-budget-usd")+1];const prompt=args[args.indexOf("-p")+1];const ledger=JSON.parse(fs.readFileSync(${JSON.stringify(join(artifactDir, "cumulative-spend.json"))},"utf8"));const entry=ledger.entries.at(-1);if(budget!=="0.4"||!prompt.includes('"max_estimated_cost_usd":0.2')||!prompt.includes("internal spending admission check")||entry.agentAllowance!==0.4||entry.appAllowance!==0.2)process.exit(9);process.stdout.write(${JSON.stringify(transcript(events))});\n`,
     );
     await main(args, {
       ...env,
@@ -669,7 +661,7 @@ it("verifies inline selections carried through an external agent prompt and nati
     if (!address || typeof address === "string") throw new Error("Missing listener");
     const cli = join(dir, "inline-agent");
     const source = () =>
-      `#!${process.execPath}\nconst prompt=process.argv[process.argv.indexOf("-p")+1];const match=prompt.match(/using (\\{.*\\})\\. If estimate/);if(!match||!prompt.includes("Call list_targets with {}")||prompt.includes("and ensure"))process.exit(7);const input=JSON.parse(match[1]);if(JSON.stringify(input.targets)!==JSON.stringify(${JSON.stringify(selections)}))process.exit(8);const tools=${JSON.stringify(tools)};const events=tools.map(tool=>({type:"assistant",message:{content:[{type:"tool_use",id:tool,name:"mcp__aeo__"+tool,input:tool==="start_run"||tool==="estimate_run"?input:{}}]}}));events.push({type:"user",message:{content:[{type:"tool_result",tool_use_id:"start_run",content:[{type:"text",text:JSON.stringify({run:{id:"inline-run"}})}]}]}},{type:"result",total_cost_usd:0.04,is_error:false});process.stdout.write(events.map(event=>JSON.stringify(event)).join("\\n"));\n`;
+      `#!${process.execPath}\nconst prompt=process.argv[process.argv.indexOf("-p")+1];const match=prompt.match(/using (\\{.*\\})\\. The server/);if(!match||!prompt.includes("Call list_targets with {}")||prompt.includes("and ensure"))process.exit(7);const input=JSON.parse(match[1]);if(JSON.stringify(input.targets)!==JSON.stringify(${JSON.stringify(selections)}))process.exit(8);const tools=${JSON.stringify(tools)};const events=tools.map(tool=>({type:"assistant",message:{content:[{type:"tool_use",id:tool,name:"mcp__aeo__"+tool,input:tool==="start_run"?input:{}}]}}));events.push({type:"user",message:{content:[{type:"tool_result",tool_use_id:"start_run",content:[{type:"text",text:JSON.stringify({run:{id:"inline-run"}})}]}]}},{type:"result",total_cost_usd:0.04,is_error:false});process.stdout.write(events.map(event=>JSON.stringify(event)).join("\\n"));\n`;
     await writeFile(cli, source());
     await chmod(cli, 0o700);
     const args = [

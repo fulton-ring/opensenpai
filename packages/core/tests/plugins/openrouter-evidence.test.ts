@@ -151,3 +151,81 @@ it("requires actual executed search counters, not merely a native pipeline stage
     code: "search_proof_failed",
   });
 });
+
+function sonarWire() {
+  return {
+    ...raw,
+    model: "perplexity/sonar",
+    provider: "Perplexity",
+    usage: { prompt_tokens: 34, completion_tokens: 991, total_tokens: 1025, cost: 0.00603 },
+    openrouter_metadata: { requested: "perplexity/sonar", strategy: "direct", attempt: 1 },
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: "assistant",
+          content: "Grounded answer [1]",
+          annotations: [
+            {
+              type: "url_citation",
+              url_citation: { url: "https://example.com/evidence", title: "Evidence" },
+            },
+          ],
+        },
+        finish_reason: "stop",
+      },
+    ],
+  };
+}
+
+async function sonarResult(wire: unknown) {
+  const request = input();
+  request.target = targetSchema.parse({
+    id: "sonar",
+    transport: "openrouter",
+    model: "perplexity/sonar",
+    search: { mode: "native" },
+    provider_options: { provider: "perplexity" },
+  });
+  return executeProvider(request, env, {
+    fetch: async (url, init) => {
+      if (String(url).endsWith("/endpoints"))
+        return json({
+          data: { endpoints: [{ tag: "perplexity", provider_name: "Perplexity", status: 0 }] },
+        });
+      if (String(url).includes("/generation?")) return json({}, 404);
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider.allow_fallbacks).toBe(false);
+      expect(body.tools).toBeUndefined();
+      return json(wire);
+    },
+  });
+}
+
+it("recognizes first-party Sonar grounding without inventing unavailable search counters", async () => {
+  const result = await sonarResult(sonarWire());
+  expect(result.search_activity).toEqual({
+    requested: "native",
+    observed: "executed",
+    engine: "native",
+  });
+  expect(result.usage.search_requests).toBeNull();
+  expect(result.citations).toMatchObject([{ url: "https://example.com/evidence" }]);
+  expect(result.usage.reported_cost_usd).toBe(0.00603);
+});
+
+it.each([
+  { provider: "Other" },
+  { model: "different/model" },
+  { openrouter_metadata: { requested: "perplexity/sonar", strategy: "fallback", attempt: 2 } },
+  {
+    choices: [
+      { index: 0, message: { role: "assistant", content: "No grounding" }, finish_reason: "stop" },
+    ],
+  },
+  { usage: { ...sonarWire().usage, server_tool_use_details: { web_search_requests: 0 } } },
+])("rejects incomplete or contradictory intrinsic Sonar proof: %j", async (change) => {
+  await expect(sonarResult({ ...sonarWire(), ...change })).rejects.toMatchObject({
+    code: "search_proof_failed",
+  });
+});

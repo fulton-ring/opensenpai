@@ -20,6 +20,20 @@ export function publicError(error: unknown) {
     retryable: false,
   };
 }
+
+/** Hide internal reservation forecasts while preserving provider-reported charges and raw evidence. */
+export function publicResearchResult(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(publicResearchResult);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !["estimated_cost_usd", "retrieval_estimated_cost_usd"].includes(key))
+      .map(([key, item]) => [
+        key,
+        ["raw_response", "raw", "metadata"].includes(key) ? item : publicResearchResult(item),
+      ]),
+  );
+}
 const id = z.string().min(1).max(160).describe("Durable run ID returned by start_run.");
 const outputSchema = z.record(z.string(), z.unknown());
 const runId = z.object({ run_id: id }).strict();
@@ -53,7 +67,7 @@ function tool<S extends z.ZodType>(
     },
     execute: async (input) => {
       try {
-        return (await execute(input as z.output<S>)) as Record<string, unknown>;
+        return publicResearchResult(await execute(input as z.output<S>)) as Record<string, unknown>;
       } catch (error) {
         return { error: publicError(error) };
       }
@@ -118,7 +132,7 @@ export function createResearchMcp(
     name: "OpenSenpai Research",
     version: "0.1.0",
     instructions:
-      "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to estimate_run/start_run; named presets are optional. No code edits are needed to choose a model. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
+      "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to start_run; named presets are optional. No code edits are needed to choose a model. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
     tools: {
       ...accountTools(account),
       list_targets: tool(
@@ -127,13 +141,6 @@ export function createResearchMcp(
         discoveryInput,
         true,
         (query) => service.listTargets(query),
-      ),
-      estimate_run: tool(
-        "estimate_run",
-        "Estimate inline model/search experiments or optional presets using server-owned pricing. May read model metadata; performs no paid generation or search. Unpriced targets remain explicit.",
-        runInputSchema,
-        true,
-        (input) => service.estimateRun(input),
       ),
       start_run: tool(
         "start_run",
@@ -151,7 +158,7 @@ export function createResearchMcp(
       ),
       get_results: tool(
         "get_results",
-        "Read a bounded page of normalized observations. Raw provider payloads are excluded unless include_raw is true.",
+        "Read normalized answers, provider-attributed citations, links extracted from the answer, retrieved sources, actual usage and errors. Retrieved sources alone do not prove the model cited them. Raw provider payloads require include_raw:true.",
         resultsInput,
         true,
         (input) => service.getResults(input),

@@ -149,3 +149,43 @@ it("uses only research storage bridges by default, without account coupling", as
     f.d1.close();
   }
 });
+
+it("executes an externally delivered observation through native D1 workflow storage", async () => {
+  const f = bridgeFixture();
+  let calls = 0;
+  const app = await createApplication(env, {
+    bridgeFetch: f.bridgeFetch,
+    listen: false,
+    providers: {
+      models: {
+        local: {
+          availability: () => ({ available: true }),
+          execute: async () => {
+            calls++;
+            throw new ResearchError("provider_not_dispatched", "Fixture stops before paid work");
+          },
+        },
+      },
+      retrievals: {},
+    },
+    targets: [{ id: "local", transport: "local", model: "local", search: { mode: "off" } }],
+  });
+  try {
+    const { run } = await app.service.startRun({
+      prompts: [{ id: "p", text: "Question?" }],
+      targets: ["local"],
+      idempotency_key: "d1-queue-execution",
+    });
+    const pending = await app.store.listUnqueued(10, run.id);
+    expect(pending).toHaveLength(1);
+    const pendingObservation = pending[0];
+    if (!pendingObservation) throw new Error("Expected pending observation");
+    await app.runtime.executeObservation(pendingObservation.id);
+    expect(calls).toBe(1);
+    expect((await app.store.getRun(run.id))?.status).toBe("failed");
+  } finally {
+    await app.close();
+    await f.research.close();
+    f.d1.close();
+  }
+});
