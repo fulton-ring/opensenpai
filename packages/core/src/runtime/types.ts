@@ -10,6 +10,7 @@ import type {
   RetrievalRecord,
   RunRecord,
   SpendAuthorization,
+  Usage,
 } from "../contracts.js";
 import type { ProviderRegistry, RetrievalInput } from "../providers/types.js";
 import type { SettlementEvent } from "../storage/settlements.js";
@@ -34,7 +35,19 @@ export interface RuntimeStore {
   ): Promise<void>;
   cancelRun(id: string): Promise<unknown>;
   recoverExpired(): Promise<unknown>;
-  listPendingSettlements?(limit?: number): Promise<SettlementEvent[]>;
+  listPendingSettlements?(
+    limit?: number,
+    attempt?: SpendAuthorization,
+    includeDeferred?: boolean,
+  ): Promise<SettlementEvent[]>;
+  correctUsage?(id: string, attemptId: string, usage: Usage): Promise<void>;
+  listPendingUsageReconciliations?(
+    limit?: number,
+    includeDeferred?: boolean,
+  ): Promise<Observation[]>;
+  claimUsageReconciliation?(attemptId: string, owner: string, leaseMs?: number): Promise<boolean>;
+  finishUsageReconciliation?(id: string, owner: string, usage: Usage | null): Promise<void>;
+  deferSettlement?(id: string): Promise<void>;
   ackSettlement?(id: string): Promise<void>;
   setRetrieval?(observationId: string, retrievalId: string): Promise<void>;
   getRetrieval(id: string): Promise<RetrievalRecord | null>;
@@ -88,6 +101,8 @@ export interface RuntimeOptions {
   timeoutMs?: number;
   maxConcurrent?: number;
   repairIntervalMs?: number;
+  /** Host settlement callback deadline, capped at ten seconds. */
+  settlementTimeoutMs?: number;
   cancellationPollMs?: number;
   /** Queue consumers use only executeObservation; no native background workers. */
   directOnly?: boolean;

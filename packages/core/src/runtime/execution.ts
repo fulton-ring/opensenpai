@@ -250,6 +250,20 @@ export class ObservationExecutor {
 
   private async persistResult(attempt: Attempt, result: ProviderResult): Promise<void> {
     attempt.result = result;
+    const current = await this.options.store.getObservation(attempt.observation.id);
+    if (
+      current?.status === "succeeded" &&
+      result.usage.reported_cost_usd !== null &&
+      this.options.store.correctUsage
+    ) {
+      await this.options.store.correctUsage(
+        current.id,
+        attempt.authorization.attempt_id,
+        result.usage,
+      );
+      attempt.terminal = "succeeded";
+      return;
+    }
     await persistEvidence(() =>
       this.options.store.succeed(attempt.observation.id, attempt.authorization.attempt_id, result),
     );

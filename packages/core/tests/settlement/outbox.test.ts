@@ -106,12 +106,13 @@ it("atomically persists immutable usage and settlement, and ACKs only the reques
   await store.succeed(observation.id, claimed.attempt_id, result);
   await store.succeed(observation.id, claimed.attempt_id, result);
   const pending = await store.listPendingSettlements();
-  expect(pending).toHaveLength(2);
-  expect(pending[1]).toMatchObject({ outcome: "succeeded", usage: result.usage });
+  expect(pending).toHaveLength(1);
   if (!unknown) throw new Error("Expected unknown event");
-  expect(pending[1]?.id).not.toBe(unknown.id);
+
   await store.ackSettlement(unknown.id);
-  expect(await store.listPendingSettlements()).toEqual([pending[1]]);
+  expect(await store.listPendingSettlements()).toEqual([
+    expect.objectContaining({ outcome: "succeeded", usage: result.usage, revision: 2 }),
+  ]);
   expect((await store.getRun(observation.run_id))?.reported_cost_usd).toBe(0.02);
   expect(RESEARCH_METHODS).toContain("listPendingSettlements");
   expect(RESEARCH_METHODS).toContain("ackSettlement");
@@ -163,10 +164,12 @@ it("retries failed callbacks on restart without replaying paid work", async () =
   resources.push(() => runtime.stop());
   await runtime.executeObservation(observation.id);
   expect((await store.getObservation(observation.id))?.status).toBe("succeeded");
-  expect(await store.listPendingSettlements()).toHaveLength(1);
+  expect(await store.listPendingSettlements(1, undefined, true)).toHaveLength(1);
   await runtime.stop();
   await store.close();
-  const reopened = new ResearchStore(createClient({ url }), "test");
+  const reopened = new ResearchStore(createClient({ url }), "test", {
+    clock: () => new Date(Date.now() + 300_000),
+  });
   resources.push(() => reopened.close());
   await reopened.initialize();
   const delivered = vi.fn(async () => undefined);
@@ -181,11 +184,13 @@ it("retries failed callbacks on restart without replaying paid work", async () =
   });
   resources.push(() => restarted.stop());
   await restarted.start();
+  await restarted.retrySettlements();
   await restarted.executeObservation(observation.id);
   expect(delivered).toHaveBeenCalledExactlyOnceWith(
     expect.objectContaining({ attempt_id: expect.any(String) }),
     "succeeded",
     result.usage,
+    1,
   );
   expect(await reopened.listPendingSettlements()).toEqual([]);
   expect(paid).toHaveBeenCalledTimes(1);
@@ -210,7 +215,7 @@ it("rolls back terminal evidence when inserting its outbox event fails", async (
 });
 
 it("repeats the same immutable event after ACK loss and keeps host charging idempotent", async () => {
-  const { store, observation } = await fixture();
+  const { store, observation, expire } = await fixture();
   const claimed = await store.claim(observation.id, "owner");
   if (!claimed?.attempt_id) throw new Error("Expected claim");
   await store.succeed(observation.id, claimed.attempt_id, result);
@@ -224,7 +229,8 @@ it("repeats the same immutable event after ACK loss and keeps host charging idem
   vi.spyOn(store, "ackSettlement").mockRejectedValueOnce(new Error("ACK lost"));
   const options = { store, env: {}, role: "all" as const, hooks: { settled } };
   await drainSettlements(options);
-  expect(await store.listPendingSettlements()).toEqual(events);
+  expect(await store.listPendingSettlements(100, undefined, true)).toEqual(events);
+  expire();
   await drainSettlements(options);
   expect(settled).toHaveBeenCalledTimes(2);
   expect([...charged.values()]).toEqual([0.02]);

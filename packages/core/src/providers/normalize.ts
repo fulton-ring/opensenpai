@@ -153,6 +153,16 @@ function rawTokens(raw: Json) {
   };
 }
 
+function reportedCost(responses: Json[]) {
+  const costs = new Map<string | number, number | null>();
+  for (const [index, raw] of responses.entries()) {
+    const key = str(raw.id)?.trim() || str(raw.responseId)?.trim() || index;
+    const cost = rawTokens(raw).cost;
+    costs.set(key, cost ?? costs.get(key) ?? null);
+  }
+  return sumCounts([...costs.values()]);
+}
+
 function usage(
   input: ProviderInput,
   responses: Json[],
@@ -182,7 +192,7 @@ function usage(
     reasoning_tokens: num(sdk?.outputTokenDetails.reasoningTokens) ?? rawReasoning,
     cached_tokens: num(sdk?.inputTokenDetails.cacheReadTokens) ?? rawCached,
     search_requests: searches,
-    reported_cost_usd: sumCounts(tokens.map((t) => t.cost)),
+    reported_cost_usd: reportedCost(responses),
     estimated_cost_usd: estimated,
     raw:
       responses.length === 1

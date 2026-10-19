@@ -1,5 +1,15 @@
 /** Idempotent research tables and indexes, including immutable usage and reconciliation records. */
 export const migrations = [
+  `CREATE TABLE IF NOT EXISTS app_usage_revisions (
+    workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL, revision INTEGER NOT NULL,
+    run_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(workspace_id,attempt_id,revision))`,
+  `CREATE TABLE IF NOT EXISTS app_usage_pending (
+    workspace_id TEXT NOT NULL, attempt_id TEXT NOT NULL, owner TEXT,
+    next_at TEXT NOT NULL, tries INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(workspace_id,attempt_id))`,
+  `CREATE TABLE IF NOT EXISTS app_settlement_retries (
+    workspace_id TEXT NOT NULL, id TEXT NOT NULL, next_at TEXT NOT NULL,
+    tries INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(workspace_id,id))`,
   `CREATE TABLE IF NOT EXISTS app_runs (
     workspace_id TEXT NOT NULL, id TEXT NOT NULL, idempotency_key TEXT NOT NULL,
     input_hash TEXT NOT NULL, data TEXT NOT NULL,

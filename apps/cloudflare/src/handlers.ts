@@ -59,7 +59,7 @@ export async function consumeObservations(
 }
 
 /** Repair queue delivery for accepted work without creating or scheduling research. */
-export async function dispatchOutbox(env: DeploymentEnvironment): Promise<void> {
+export async function dispatchOutbox(env: DeploymentEnvironment, repair = false): Promise<void> {
   const response = await env.APPLICATION.fetch(internalRequest(env, "outbox", "GET"));
   if (!response.ok) throw new Error(`Outbox unavailable: ${response.status}`);
   const body: unknown = await response.json();
@@ -79,6 +79,11 @@ export async function dispatchOutbox(env: DeploymentEnvironment): Promise<void> 
     );
     if (!marked.ok) throw new Error(`Outbox mark failed: ${marked.status}`);
     await marked.arrayBuffer();
+  }
+  if (repair) {
+    const reconciled = await env.APPLICATION.fetch(internalRequest(env, "reconcile"));
+    await reconciled.arrayBuffer();
+    if (!reconciled.ok) throw new Error(`Billing reconciliation unavailable: ${reconciled.status}`);
   }
 }
 

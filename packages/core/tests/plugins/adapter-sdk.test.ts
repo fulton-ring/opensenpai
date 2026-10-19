@@ -399,3 +399,68 @@ it("keeps a post-generation undispatched error from releasing paid reservations"
     result: { usage: { reported_cost_usd: 0.02 } },
   });
 });
+
+it("retains billing evidence when a successful HTTP response fails SDK parsing", async () => {
+  const provider = createOpenAICompatibleProvider({
+    name: "custom",
+    baseURL: "https://gateway.test/v1",
+    apiKeyEnv: "KEY",
+  });
+  await expect(
+    provider.execute(input(), {
+      env: { KEY: "test" },
+      fetch: async () =>
+        response({
+          id: "paid-malformed",
+          model: "custom-model",
+          choices: [
+            { index: 0, message: { role: "assistant", content: 42 }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 8, completion_tokens: 3, cost: 0.03 },
+        }),
+    }),
+  ).rejects.toMatchObject({
+    code: "provider_error",
+    result: {
+      response_id: "paid-malformed",
+      usage: { reported_cost_usd: 0.03 },
+      raw_response: { id: "paid-malformed" },
+    },
+  });
+});
+
+it("retains paid HTTP evidence when generation is aborted after dispatch", async () => {
+  const controller = new AbortController();
+  const request = { ...input(), signal: controller.signal };
+  const provider = createSdkProvider({
+    createModel: (_request, context) => ({
+      model: createOpenAICompatible({
+        name: "custom",
+        baseURL: "https://gateway.test/v1",
+        fetch: context.fetch,
+      })("custom-model"),
+    }),
+    verify: async (result, request) => {
+      request.signal.throwIfAborted();
+      return result;
+    },
+  });
+  await expect(
+    provider.execute(request, {
+      env: { KEY: "test" },
+      fetch: async () => {
+        controller.abort();
+        return response({
+          id: "paid-aborted",
+          model: "custom-model",
+          choices: [
+            { index: 0, message: { role: "assistant", content: "Answer" }, finish_reason: "stop" },
+          ],
+          usage: { prompt_tokens: 8, completion_tokens: 3, cost: 0.03 },
+        });
+      },
+    }),
+  ).rejects.toMatchObject({
+    result: { response_id: "paid-aborted", usage: { reported_cost_usd: 0.03 } },
+  });
+});

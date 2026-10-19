@@ -12,6 +12,7 @@ import { selectData } from "./records.js";
 /** Immutable settlement evidence; delivery may repeat until this exact ID is acknowledged. */
 export interface SettlementEvent {
   id: string;
+  revision: number;
   attempt: SpendAuthorization;
   outcome: ObservationStatus;
   usage: Usage | null;
@@ -93,7 +94,7 @@ export async function enqueueSettlement(
   attemptId: string,
   runId: string,
   data: string,
-  reconciliation: boolean,
+  revision: number,
 ): Promise<void> {
   const evidence = JSON.parse(data) as {
     outcome: string;
@@ -102,7 +103,8 @@ export async function enqueueSettlement(
   };
   const attempt = await authorization(tx, workspace, attemptId, runId, evidence.estimated_cost_usd);
   const event: SettlementEvent = {
-    id: `${attemptId}:${reconciliation ? "reconciliation" : "initial"}`,
+    id: `${attemptId}:${revision === 1 ? "initial" : revision === 2 ? "reconciliation" : `revision:${revision}`}`,
+    revision,
     attempt,
     outcome:
       evidence.outcome === "not_dispatched" ? "failed" : (evidence.outcome as ObservationStatus),

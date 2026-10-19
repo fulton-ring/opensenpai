@@ -259,3 +259,16 @@ describe("Cloudflare deployment delivery", () => {
     ]);
   });
 });
+
+it("dispatches accepted work before billing repair and skips reconciliation on ingress", async () => {
+  const paths: string[] = [];
+  const env = environment(async (request) => {
+    paths.push(new URL(request.url).pathname);
+    return request.method === "GET" ? Response.json({ observations: [] }) : new Response();
+  });
+  await dispatchOutbox(env);
+  expect(paths).toEqual(["/internal/observations/outbox"]);
+  paths.length = 0;
+  await dispatchOutbox(env, true);
+  expect(paths).toEqual(["/internal/observations/outbox", "/internal/observations/reconcile"]);
+});

@@ -335,10 +335,11 @@ it("records failed attempts once and releases only a known non-dispatched reserv
   await a.fail(item.id, claim.attempt_id, failure, "failed");
   expect((await a.getRun(item.run_id))?.reserved_cost_usd).toBe(0);
   expect((await a.getObservation(item.id))?.error).toEqual(failure);
+  expect(await a.listPendingUsageReconciliations(1, true)).toEqual([]);
   const usage = await a.client.execute("SELECT data FROM app_usage");
   expect(usage.rows).toHaveLength(1);
   expect(JSON.parse(String(usage.rows[0]?.data))).toMatchObject({
-    reported_cost_usd: null,
+    reported_cost_usd: 0,
     estimated_cost_usd: 0.1,
   });
   expect(await a.claim(item.id, "retry")).toBeNull();

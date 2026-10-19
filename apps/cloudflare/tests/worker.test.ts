@@ -69,7 +69,7 @@ describe("owning Container Durable Object storage", () => {
 });
 
 describe("scheduled repair", () => {
-  it.each(["idle", "unqueued", "settlement", "storage failure"])(
+  it.each(["idle", "unqueued", "settlement", "usage", "storage failure"])(
     "checks durable state before waking the Node container: %s",
     async (state) => {
       const fetcher = vi.fn(async () => Response.json({ observations: [] }));
@@ -84,7 +84,8 @@ describe("scheduled repair", () => {
         return {
           result:
             (state === "unqueued" && method === "listUnqueued") ||
-            (state === "settlement" && method === "listPendingSettlements")
+            (state === "settlement" && method === "listPendingSettlements") ||
+            (state === "usage" && method === "listPendingUsageReconciliations")
               ? [{ id: "pending-1" }]
               : [],
         };
@@ -100,7 +101,9 @@ describe("scheduled repair", () => {
       if (state === "storage failure") await expect(operation).rejects.toThrow();
       else await operation;
       expect(researchRpc).toHaveBeenCalled();
-      expect(fetcher).toHaveBeenCalledTimes(state === "unqueued" || state === "settlement" ? 1 : 0);
+      expect(fetcher).toHaveBeenCalledTimes(
+        ["unqueued", "settlement", "usage"].includes(state) ? 2 : 0,
+      );
     },
   );
 });

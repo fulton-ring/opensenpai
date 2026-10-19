@@ -1,6 +1,9 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { type ProviderInput, targetSchema } from "../../src/contracts.js";
 import { executeProvider } from "../../src/providers/index.js";
+import { normalize } from "../../src/providers/normalize.js";
+import { createOpenRouterProvider } from "../../src/providers/openrouter.js";
+import * as sdk from "../../src/providers/sdk.js";
 
 // Response metadata shape observed during the real customer-question experiment.
 const raw = {
@@ -228,4 +231,165 @@ it.each([
   await expect(sonarResult({ ...sonarWire(), ...change })).rejects.toMatchObject({
     code: "search_proof_failed",
   });
+});
+
+it.each(["normal", "failed", "wrapped", "multiple"])(
+  "reconciles %s evidence using metadata GETs only",
+  async (shape) => {
+    const request = input();
+    request.target.search = { mode: "off" };
+    const result = normalize(
+      request,
+      { ...raw, ...(shape === "failed" ? { error: { message: "failed" } } : {}) },
+      "",
+      null,
+    );
+    if (shape === "wrapped")
+      result.raw_response = { generation: { responses: [raw] }, generation_metadata: [null] };
+    if (shape === "multiple")
+      result.raw_response = { responses: [raw, raw, { ...raw, id: "second" }] };
+    const calls: string[] = [];
+    const usage = await createOpenRouterProvider().reconcileUsage?.(request.target, result, {
+      env,
+      fetch: async (url, init) => {
+        calls.push(String(url));
+        expect(init?.method ?? "GET").toBe("GET");
+        expect(String(url)).toContain("/generation?id=");
+        return json({
+          data: {
+            id: new URL(String(url)).searchParams.get("id"),
+            model: raw.model,
+            provider_name: "Anthropic",
+            total_cost: 0.03,
+          },
+        });
+      },
+    });
+    expect(usage?.reported_cost_usd).toBe(shape === "multiple" ? 0.06 : 0.03);
+    expect(calls).toHaveLength(shape === "multiple" ? 2 : 1);
+  },
+);
+
+it.each([
+  "missing-id",
+  "missing-metadata",
+  "negative",
+  "wrong-model",
+  "wrong-provider",
+  "partial",
+  "wrong-id",
+  "missing-metadata-id",
+  "infinite",
+  "incomplete-two",
+])("leaves %s billing evidence unresolved", async (shape) => {
+  const request = input();
+  const result = normalize(request, raw, "", null);
+  if (shape === "missing-id") {
+    result.response_id = null;
+    result.raw_response = {};
+  }
+  if (shape === "partial") result.raw_response = { responses: [raw, { usage: {} }] };
+  if (shape === "incomplete-two")
+    result.raw_response = { responses: [raw, { ...raw, id: "second" }] };
+  const usage = await createOpenRouterProvider().reconcileUsage?.(request.target, result, {
+    env,
+    fetch: async (url) => {
+      const data: Record<string, unknown> = {
+        id: new URL(String(url)).searchParams.get("id"),
+        model: raw.model,
+        provider_name: "Anthropic",
+        total_cost: 0.03,
+      };
+      if (shape === "missing-metadata-id") delete data.id;
+      if (shape === "wrong-id") data.id = "wrong";
+      if (shape === "wrong-model") data.model = "wrong";
+      if (shape === "wrong-provider") data.provider_name = "Other";
+      data.total_cost =
+        ({ negative: -1, infinite: Infinity } as Record<string, number>)[shape] ?? 0.03;
+      if (shape === "missing-metadata") delete data.total_cost;
+      if (shape === "incomplete-two" && String(url).includes("second")) delete data.total_cost;
+      return json({ data });
+    },
+  });
+  expect(usage).toBeNull();
+});
+
+it.each([-1, Number.NaN])(
+  "preserves known response cost when metadata cost is invalid: %s",
+  async (total_cost) => {
+    const result = await executeProvider(input(), env, {
+      fetch: fetcher(raw, { id: raw.id, total_cost }),
+    });
+    expect(result.usage.reported_cost_usd).toBe(raw.usage.cost);
+  },
+);
+
+it("counts repeated generation IDs once while retaining exact response evidence", () => {
+  const result = normalize(input(), raw, "", null, { responses: [raw, raw] });
+  expect(result.usage.reported_cost_usd).toBe(raw.usage.cost);
+  expect(result.raw_response).toEqual({ responses: [raw, raw] });
+});
+
+it("retains partial known charges in raw usage without treating missing charges as zero", () => {
+  const result = normalize(input(), raw, "", null, { responses: [raw, { id: "unknown" }] });
+  expect(result.usage.reported_cost_usd).toBeNull();
+  expect(result.usage.raw).toMatchObject({ responses: [{ cost: raw.usage.cost }, {}] });
+});
+
+it.each(["wrong-id", "wrong-model", "wrong-provider"])(
+  "keeps known charges when immediate metadata has %s",
+  async (shape) => {
+    const operation = executeProvider(input(), env, {
+      fetch: fetcher(raw, {
+        id: shape === "wrong-id" ? "other" : raw.id,
+        model: shape === "wrong-model" ? "other" : raw.model,
+        provider_name: shape === "wrong-provider" ? "Other" : raw.provider,
+        total_cost: 9,
+      }),
+    });
+    const result = await operation.catch((error) => error.result);
+    expect(result.usage.reported_cost_usd).toBe(raw.usage.cost);
+  },
+);
+
+it("deduplicates metadata reads and charges during immediate multiresponse verification", async () => {
+  const spy = vi.spyOn(sdk, "createSdkProvider").mockImplementationOnce((options) => ({
+    availability: () => ({ available: true }),
+    execute: async (request, context) => {
+      if (!options.verify) throw new Error("Verifier required");
+      return options.verify(
+        normalize(request, raw, "Answer", "stop", { responses: [raw, raw] }),
+        request,
+        context,
+      );
+    },
+  }));
+  let metadataReads = 0;
+  const transport = fetcher(raw, {
+    id: raw.id,
+    model: raw.model,
+    provider_name: raw.provider,
+    total_cost: 0.03,
+  });
+  try {
+    const result = await executeProvider(input(), env, {
+      fetch: async (url, init) => {
+        if (String(url).includes("/generation?")) metadataReads++;
+        return transport(url, init);
+      },
+    });
+    expect(result.usage.reported_cost_usd).toBe(0.03);
+    expect(metadataReads).toBe(1);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+it.each(["", "   "])("does not deduplicate unidentified responses with ID %j", (id) => {
+  const responses = [
+    { id, usage: { cost: 0.02 } },
+    { id, usage: { cost: 0.03 } },
+  ];
+  const result = normalize(input(), responses[1] ?? {}, "", null, { responses });
+  expect(result.usage.reported_cost_usd).toBe(0.05);
 });

@@ -4,6 +4,7 @@ import {
   type ProviderResult,
   ResearchError,
   type Target,
+  type Usage,
 } from "../contracts.js";
 import { arr, num, obj, records, str } from "./normalize.js";
 import { ProviderResponseError } from "./outcomes.js";
@@ -246,19 +247,86 @@ async function generationMetadata(
 ) {
   const responses = responseBodies(result);
   const items: (Record<string, unknown> | null)[] = [];
+  const cache = new Map<string, Record<string, unknown> | null>();
   for (const response of responses) {
-    try {
-      items.push(await metadata(str(response.id) ?? null, context, key, signal));
-    } catch {
+    const id = responseId(response, responses.length, result);
+    if (!id) {
       items.push(null);
+      continue;
     }
+    if (!cache.has(id)) {
+      try {
+        cache.set(id, await metadata(id, context, key, signal));
+      } catch {
+        cache.set(id, null);
+      }
+    }
+    items.push(cache.get(id) ?? null);
   }
   return items;
 }
 
 function responseBodies(result: ProviderResult) {
-  const raw = obj(result.raw_response);
+  let raw = obj(result.raw_response);
+  while (raw.generation && typeof raw.generation === "object") raw = obj(raw.generation);
   return Array.isArray(raw.responses) ? records(raw.responses) : [raw];
+}
+
+function matchesGeneration(
+  item: Record<string, unknown> | null,
+  id: string,
+  model: string,
+  provider: string | null,
+) {
+  if (!item || item.id !== id) return false;
+  return [
+    [item.id, id],
+    [item.model, model],
+    [item.provider_name, provider],
+  ].every(([actual, expected]) => actual === undefined || expected === null || actual === expected);
+}
+
+function responseId(response: Record<string, unknown>, count: number, result: ProviderResult) {
+  return str(response.id)?.trim() || (count === 1 ? result.response_id : null);
+}
+
+function metadataTotal(
+  target: Target,
+  result: ProviderResult,
+  items: (Record<string, unknown> | null)[],
+) {
+  const responses = responseBodies(result);
+  if (!responses.length) return null;
+  const costs = new Map<string, number>();
+  for (const [index, response] of responses.entries()) {
+    const id = responseId(response, responses.length, result);
+    const item = items[index] ?? null;
+    const cost = num(item?.total_cost);
+    const provider = str(response.provider) ?? result.serving_provider;
+    if (!id || cost === null || cost < 0 || !matchesGeneration(item, id, target.model, provider))
+      return null;
+    costs.set(id, cost);
+  }
+  const total = [...costs.values()].reduce((sum, cost) => sum + cost, 0);
+  return Number.isFinite(total) ? total : null;
+}
+
+async function reconcileUsage(
+  options: RouterOptions,
+  target: Target,
+  result: ProviderResult,
+  context: ProviderContext,
+): Promise<Usage | null> {
+  const key = context.env[apiKeyEnv(options, target)];
+  if (!key?.trim()) return null;
+  const evidence = await generationMetadata(result, context, key, AbortSignal.timeout(15_000));
+  const total = metadataTotal(target, result, evidence);
+  if (total === null) return null;
+  return {
+    ...result.usage,
+    reported_cost_usd: total,
+    raw: { original: result.usage.raw, generation_metadata: evidence },
+  };
 }
 
 function searchStages(response: Record<string, unknown>) {
@@ -371,9 +439,8 @@ async function verify(
   const responses = responseBodies(result);
   const items = await generationMetadata(result, context, key, input.signal);
   result.raw_response = { generation: result.raw_response, generation_metadata: items };
-  const costs = items.map((item) => num(item?.total_cost));
-  if (costs.every((cost) => cost !== null))
-    result.usage.reported_cost_usd = costs.reduce<number>((total, cost) => total + (cost ?? 0), 0);
+  const total = metadataTotal(input.target, result, items);
+  if (total !== null) result.usage.reported_cost_usd = total;
   const expectedEngine =
     input.target.search.mode === "server" ? input.target.search.engine : "native";
   const engines = [
@@ -415,6 +482,7 @@ export function createOpenRouterProvider(options: RouterOptions = {}): ModelProv
     availability: (target, context) => availability(options, target, context),
     resolveTarget: (target, context) => resolveTarget(options, target, context),
     listModels,
+    reconcileUsage: (target, result, context) => reconcileUsage(options, target, result, context),
     execute: async (input, context) => {
       const signal = AbortSignal.any([input.signal, AbortSignal.timeout(input.target.timeout_ms)]);
       const request = { ...input, signal };
