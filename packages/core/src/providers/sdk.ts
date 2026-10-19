@@ -175,11 +175,20 @@ async function generate(
     return await verifyResult(normalized, { ...input, signal }, context, options);
   } catch (error) {
     await Promise.all(captured.pending);
-    if (error instanceof ResearchError) throw error;
+    if (error instanceof ProviderResponseError) throw error;
     for (const raw of captured.responses)
       validateCapturedFailure(input, raw, { responses: captured.responses });
+    const failure = safeFailure(error, captured.status());
+    if (captured.responses.length)
+      throw new ProviderResponseError(
+        failure.code,
+        failure.message,
+        normalize(input, captured.responses.at(-1) ?? {}, "", null, {
+          responses: captured.responses,
+        }),
+      );
     signal.throwIfAborted();
-    throw safeFailure(error, captured.status());
+    throw failure;
   }
 }
 

@@ -291,6 +291,7 @@ export interface ExecutionHooks {
     attempt: SpendAuthorization,
     outcome: ObservationStatus,
     usage: Usage | null,
+    revision?: number,
   ) => Promise<void>;
 }
 

@@ -18,19 +18,47 @@ async function deliverPending(
 ): Promise<void> {
   const { store } = options;
   if (!store.listPendingSettlements || !store.ackSettlement) return;
-  for (let batch = 0; batch < 10; batch++) {
-    const events = (await store.listPendingSettlements(1000)).filter(
-      (event) =>
-        !attempt ||
-        (event.attempt.attempt_id === attempt.attempt_id &&
-          event.attempt.operation === attempt.operation),
-    );
-    if (!events.length) return;
-    for (const event of events) {
-      await options.hooks?.settled?.(event.attempt, event.outcome, event.usage);
-      await store.ackSettlement(event.id);
-    }
-  }
+  const ack = store.ackSettlement.bind(store);
+  const events = await store.listPendingSettlements(10, attempt);
+  // Independent attempts run together so a hung callback cannot hold the whole batch.
+  await Promise.all(
+    events.map(async (event) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const configured = options.settlementTimeoutMs ?? 10_000;
+        const timeout = Number.isFinite(configured)
+          ? Math.max(1, Math.min(configured, 10_000))
+          : 10_000;
+        await Promise.race([
+          Promise.resolve().then(() =>
+            options.hooks?.settled?.(event.attempt, event.outcome, event.usage, event.revision),
+          ),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () =>
+                reject(
+                  new ResearchError(
+                    "settlement_timeout",
+                    "Settlement delivery exceeded its deadline",
+                  ),
+                ),
+              timeout,
+            );
+          }),
+        ]);
+        await ack(event.id);
+      } catch (error) {
+        try {
+          await store.deferSettlement?.(event.id);
+        } catch (deferError) {
+          reportError(options, deferError);
+        }
+        reportError(options, error);
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
 }
 
 /** Retry committed settlement evidence without reexecuting any paid operation. */
@@ -39,10 +67,11 @@ export async function drainSettlements(
   attempt?: SpendAuthorization,
 ): Promise<void> {
   if (!options.store.listPendingSettlements || !options.store.ackSettlement) return;
+  if (attempt)
+    return deliverPending(options, attempt).catch((error) => reportError(options, error));
   const active = delivering.get(options);
   if (active) {
-    await active;
-    return drainSettlements(options, attempt);
+    return active;
   }
   const delivery = deliverPending(options, attempt).catch((error) => reportError(options, error));
   delivering.set(options, delivery);

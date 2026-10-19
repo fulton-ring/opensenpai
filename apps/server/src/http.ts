@@ -154,10 +154,13 @@ async function routes(options: HttpOptions, req: IncomingMessage, res: ServerRes
     });
   if (req.method === "GET" && url.pathname === "/internal/observations/outbox") {
     await options.store.recoverExpired();
-    await options.runtime.retrySettlements?.();
     return json(res, 200, {
       observations: (await options.store.listUnqueued(100)).map(({ id }) => ({ id })),
     });
+  }
+  if (req.method === "POST" && url.pathname === "/internal/observations/reconcile") {
+    await options.runtime.retrySettlements?.();
+    return json(res, 200, { reconciled: true });
   }
   const run = /^\/internal\/runs\/([^/]+)(\/results)?$/.exec(url.pathname);
   if (req.method === "GET" && run) return runRoute(options, res, url, run);

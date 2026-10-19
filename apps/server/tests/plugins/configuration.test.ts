@@ -79,7 +79,7 @@ describe("trusted local provider configuration", () => {
     await moduleFile(path, "export default { targets: [] }");
     expect((await loadProviderConfiguration({}, {}, path)).targets).toEqual([]);
   });
-  it.each(["resolveTarget", "listModels"])(
+  it.each(["resolveTarget", "listModels", "reconcileUsage"])(
     "rejects a non-function optional model hook: %s",
     async (method) => {
       const path = await directory();

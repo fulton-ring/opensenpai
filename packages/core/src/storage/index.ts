@@ -13,7 +13,9 @@ import {
   type RunRecord,
   type SpendAuthorization,
   type Target,
+  type Usage,
 } from "../contracts.js";
+import { appendUsageRevision } from "./accounting.js";
 import type { ResearchClient, ResearchConnection, TransactionRunner } from "./client.js";
 import { writeLock } from "./local-write.js";
 import {
@@ -27,7 +29,7 @@ import {
   writeObservation,
 } from "./records.js";
 import { migrations } from "./schema.js";
-import { enqueueSettlement, type SettlementEvent, zeroUsage } from "./settlements.js";
+import { type SettlementEvent, zeroUsage } from "./settlements.js";
 
 export type { SettlementEvent } from "./settlements.js";
 
@@ -66,6 +68,12 @@ export class ResearchStore {
   async initialize(): Promise<void> {
     await writeLock(this.client, async () => {
       await this.client.batch(migrations, "write");
+      await this.client.execute({
+        sql: `INSERT OR IGNORE INTO app_usage_pending(workspace_id,attempt_id,next_at)
+        SELECT workspace_id,id,? FROM app_attempts WHERE workspace_id=? AND reported_cost IS NULL
+        AND EXISTS (SELECT 1 FROM app_usage u WHERE u.workspace_id=app_attempts.workspace_id AND u.attempt_id=app_attempts.id AND json_extract(u.data,'$.outcome')!='not_dispatched' AND json_extract(u.data,'$.usage.reported_cost_usd') IS NULL)`,
+        args: [this.now(), this.workspaceId],
+      });
     });
   }
 
@@ -262,14 +270,164 @@ export class ResearchStore {
   }
 
   /** List durable billing deliveries in their committed evidence order. */
-  async listPendingSettlements(limit = 100): Promise<SettlementEvent[]> {
-    return selectData<SettlementEvent>(
+  async listPendingSettlements(
+    limit = 100,
+    attempt?: SpendAuthorization,
+    includeDeferred = false,
+  ): Promise<SettlementEvent[]> {
+    const result = await this.client.execute({
+      sql: `SELECT s.data FROM app_settlements s
+        LEFT JOIN app_settlement_retries r ON r.workspace_id=s.workspace_id AND r.id=s.id
+        WHERE s.workspace_id=? AND (? OR r.next_at IS NULL OR r.next_at<=?)
+        ${attempt ? "AND json_extract(s.data,'$.attempt.attempt_id')=? AND json_extract(s.data,'$.attempt.operation')=?" : ""}
+        AND NOT EXISTS (SELECT 1 FROM app_settlements earlier
+          WHERE earlier.workspace_id=s.workspace_id AND earlier.rowid<s.rowid
+          AND json_extract(earlier.data,'$.attempt.attempt_id')=json_extract(s.data,'$.attempt.attempt_id')
+          AND json_extract(earlier.data,'$.attempt.operation')=json_extract(s.data,'$.attempt.operation'))
+        ORDER BY s.rowid LIMIT ?`,
+      args: [
+        this.workspaceId,
+        includeDeferred ? 1 : 0,
+        this.now(),
+        ...(attempt ? [attempt.attempt_id, attempt.operation ?? "model"] : []),
+        Math.max(1, Math.min(limit, 1000)),
+      ],
+    });
+    return result.rows.map((row) => {
+      const event = JSON.parse(String(row.data)) as SettlementEvent;
+      event.revision ??= event.id.endsWith(":reconciliation") ? 2 : 1;
+      return event;
+    });
+  }
+
+  /** Defer only the failed event, allowing other attempts to make progress. */
+  async deferSettlement(id: string): Promise<void> {
+    await this.transaction(async (tx) => {
+      const rows = await tx.execute({
+        sql: "SELECT tries FROM app_settlement_retries WHERE workspace_id=? AND id=?",
+        args: [this.workspaceId, id],
+      });
+      const tries = Number(rows.rows[0]?.tries ?? 0) + 1;
+      const next = new Date(
+        this.clock().getTime() + Math.min(300_000, 1000 * 2 ** Math.min(tries, 8)),
+      ).toISOString();
+      await tx.execute({
+        sql: "INSERT INTO app_settlement_retries(workspace_id,id,next_at,tries) VALUES(?,?,?,?) ON CONFLICT(workspace_id,id) DO UPDATE SET next_at=excluded.next_at,tries=excluded.tries",
+        args: [this.workspaceId, id, next, tries],
+      });
+    });
+  }
+
+  /** Missing accounting evidence remains durable independently of settlement delivery. */
+  async listPendingUsageReconciliations(
+    limit = 100,
+    includeDeferred = false,
+  ): Promise<Observation[]> {
+    return selectData<Observation>(
       this.client,
-      "app_settlements",
+      "app_observations",
       this.workspaceId,
-      "ORDER BY rowid LIMIT ?",
-      [Math.max(1, Math.min(limit, 1000))],
+      `AND json_extract(data,'$.status') IN ('succeeded','failed','unknown_outcome','cancelled')
+       AND json_extract(data,'$.attempt_id') IN (SELECT attempt_id FROM app_usage_pending WHERE workspace_id=? AND (? OR next_at<=?)) ORDER BY ordinal LIMIT ?`,
+      [this.workspaceId, includeDeferred ? 1 : 0, this.now(), Math.max(1, Math.min(limit, 1000))],
     );
+  }
+
+  async claimUsageReconciliation(
+    attemptId: string,
+    owner: string,
+    leaseMs = 60_000,
+  ): Promise<boolean> {
+    return this.transaction(async (tx) => {
+      const result = await tx.execute({
+        sql: "UPDATE app_usage_pending SET owner=?,next_at=? WHERE workspace_id=? AND attempt_id=? AND next_at<=?",
+        args: [
+          owner,
+          new Date(this.clock().getTime() + leaseMs).toISOString(),
+          this.workspaceId,
+          attemptId,
+          this.now(),
+        ],
+      });
+      return result.rowsAffected === 1;
+    });
+  }
+
+  async finishUsageReconciliation(id: string, owner: string, usage: Usage | null): Promise<void> {
+    await this.transaction(async (tx) => {
+      const row = await this.observation(tx, id);
+      if (!row?.attempt_id) return;
+      const pending = await tx.execute({
+        sql: "SELECT tries FROM app_usage_pending WHERE workspace_id=? AND attempt_id=? AND owner=?",
+        args: [this.workspaceId, row.attempt_id, owner],
+      });
+      if (!pending.rows.length) return;
+      if (usage?.reported_cost_usd != null) await this.correctUsageInTransaction(tx, row, usage);
+      else {
+        const tries = Number(pending.rows[0]?.tries ?? 0) + 1;
+        await tx.execute({
+          sql: "UPDATE app_usage_pending SET owner=NULL,tries=?,next_at=? WHERE workspace_id=? AND attempt_id=?",
+          args: [
+            tries,
+            new Date(
+              this.clock().getTime() + Math.min(3_600_000, 5000 * 2 ** Math.min(tries, 10)),
+            ).toISOString(),
+            this.workspaceId,
+            row.attempt_id,
+          ],
+        });
+      }
+    });
+  }
+
+  /** Trusted accounting correction; execution status is deliberately preserved. */
+  async correctUsage(id: string, attemptId: string, usage: Usage): Promise<void> {
+    await this.transaction(async (tx) => {
+      const row = await this.observation(tx, id);
+      if (
+        !row ||
+        row.attempt_id !== attemptId ||
+        row.status === "running" ||
+        row.status === "pending"
+      )
+        return;
+      await this.correctUsageInTransaction(tx, row, usage);
+    });
+  }
+
+  private async correctUsageInTransaction(
+    tx: ResearchConnection,
+    row: Observation,
+    usage: Usage,
+  ): Promise<void> {
+    const actual = usage.reported_cost_usd;
+    if (actual === null || !Number.isFinite(actual) || actual < 0)
+      throw new ResearchError(
+        "INVALID_USAGE",
+        "A correction requires a finite nonnegative actual cost",
+      );
+    if (!row.attempt_id) return;
+    const changed = await appendUsageRevision(
+      tx,
+      this.workspaceId,
+      row.attempt_id,
+      row.run_id,
+      row.status,
+      actual,
+      usage,
+      this.now(),
+      true,
+    );
+    if (changed) {
+      if (row.result) row.result = { ...row.result, usage };
+      row.updated_at = this.now();
+      await writeObservation(tx, row);
+      await tx.execute({
+        sql: "UPDATE app_attempts SET reported_cost=?,reserved_cost=0 WHERE workspace_id=? AND id=?",
+        args: [actual, this.workspaceId, row.attempt_id],
+      });
+      await this.touchRun(tx, row.run_id);
+    }
   }
 
   /** Acknowledge only one successfully delivered event within this workspace. */
@@ -277,6 +435,10 @@ export class ResearchStore {
     await this.transaction(async (tx) => {
       await tx.execute({
         sql: "DELETE FROM app_settlements WHERE workspace_id=? AND id=?",
+        args: [this.workspaceId, id],
+      });
+      await tx.execute({
+        sql: "DELETE FROM app_settlement_retries WHERE workspace_id=? AND id=?",
         args: [this.workspaceId, id],
       });
     });
@@ -311,7 +473,7 @@ export class ResearchStore {
   async markQueued(id: string) {
     await this.transaction(async (tx) => {
       const row = await this.observation(tx, id);
-      if (!row || row.status !== "pending") return;
+      if (row?.status !== "pending") return;
       row.updated_at = this.now();
       await writeObservation(tx, row);
       await tx.execute({
@@ -422,42 +584,16 @@ export class ResearchStore {
     actual: number | null,
     usage: unknown,
   ) {
-    const attempts = await tx.execute({
-      sql: "SELECT estimated_cost FROM app_attempts WHERE workspace_id=? AND id=?",
-      args: [this.workspaceId, attemptId],
-    });
-    const data = JSON.stringify({
+    return appendUsageRevision(
+      tx,
+      this.workspaceId,
+      attemptId,
+      runId,
       outcome,
+      actual,
       usage,
-      estimated_cost_usd: attempts.rows[0]?.estimated_cost ?? null,
-      reported_cost_usd: actual,
-      created_at: this.now(),
-    });
-    const args: InValue[] = [this.workspaceId, attemptId, runId, data];
-    const inserted = await tx.execute({
-      sql: "INSERT INTO app_usage(workspace_id,attempt_id,run_id,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,attempt_id) DO NOTHING",
-      args,
-    });
-    if (inserted.rowsAffected) {
-      await enqueueSettlement(tx, this.workspaceId, attemptId, runId, data, false);
-      return true;
-    }
-    const previous = await tx.execute({
-      sql: "SELECT json_extract(data,'$.outcome') outcome FROM app_usage WHERE workspace_id=? AND attempt_id=?",
-      args: [this.workspaceId, attemptId],
-    });
-    if (
-      previous.rows[0]?.outcome !== "unknown_outcome" ||
-      (!["succeeded", "failed", "cancelled", "not_dispatched"].includes(outcome) && usage === null)
-    )
-      return false;
-    const corrected = await tx.execute({
-      sql: "INSERT INTO app_usage_reconciliations(workspace_id,attempt_id,run_id,data) VALUES(?,?,?,?) ON CONFLICT(workspace_id,attempt_id) DO NOTHING",
-      args,
-    });
-    if (!corrected.rowsAffected) return false;
-    await enqueueSettlement(tx, this.workspaceId, attemptId, runId, data, true);
-    return true;
+      this.now(),
+    );
   }
 
   private async touchRun(tx: ResearchConnection, id: string) {
@@ -529,7 +665,7 @@ export class ResearchStore {
         attemptId,
         row.run_id,
         outcome,
-        actual,
+        unbilled ? 0 : actual,
         actual !== null || unbilled,
         partialResult?.usage ?? (unbilled ? zeroUsage() : null),
       );

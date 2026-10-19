@@ -26,7 +26,11 @@ function object(value: unknown): value is Record<string, unknown> {
 function registry(value: unknown): ProviderRegistry {
   if (!object(value) || Object.keys(value).some((key) => !["models", "retrievals"].includes(key)))
     return invalidConfig();
-  validateEntries(value.models, ["availability", "execute"], ["resolveTarget", "listModels"]);
+  validateEntries(
+    value.models,
+    ["availability", "execute"],
+    ["resolveTarget", "listModels", "reconcileUsage"],
+  );
   validateEntries(value.retrievals, ["availability", "estimate", "retrieve"]);
   return value as unknown as ProviderRegistry;
 }

@@ -1,4 +1,10 @@
-import type { ProviderInput, ProviderResult, RetrievalBundle, Target } from "../contracts.js";
+import type {
+  ProviderInput,
+  ProviderResult,
+  RetrievalBundle,
+  Target,
+  Usage,
+} from "../contracts.js";
 
 /** Operator-owned credentials and settings supplied to registered adapters. */
 export type ProviderEnvironment = Record<string, string | undefined>;
@@ -17,6 +23,12 @@ export interface ModelProvider {
   availability(target: Target, context: ProviderContext): Availability;
   /** Resolve operator-owned pricing/routing for a model selected through MCP. Never generates text. */
   resolveTarget?(target: Target, context: ProviderContext): Promise<Target>;
+  /** Resolve retained billing evidence using read-only provider metadata; null means unresolved. */
+  reconcileUsage?(
+    target: Target,
+    result: ProviderResult,
+    context: ProviderContext,
+  ): Promise<Usage | null>;
   listModels?(
     query: { query?: string; limit: number },
     context: ProviderContext,

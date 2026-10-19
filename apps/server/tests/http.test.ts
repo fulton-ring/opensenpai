@@ -56,6 +56,9 @@ async function setup(
       },
     },
     runtime: {
+      async retrySettlements() {
+        events.push("settlements");
+      },
       async executeObservation() {
         calls++;
         if (executeThrows) throw new Error("provider runtime error with secret details");
@@ -81,6 +84,15 @@ describe("HTTP authentication and queue durability", () => {
     });
     expect(response.status).toBe(200);
     expect(test.events).toEqual(["recover", "list"]);
+    expect(test.calls()).toBe(0);
+  });
+  it("reconciles billing only on the authenticated repair route", async () => {
+    const test = await setup();
+    const path = `${test.url}/internal/observations/reconcile`;
+    expect((await fetch(path, { method: "POST", headers: auth(token) })).status).toBe(401);
+    expect(test.events).toEqual([]);
+    expect((await fetch(path, { method: "POST", headers: auth(internal) })).status).toBe(200);
+    expect(test.events).toEqual(["settlements"]);
     expect(test.calls()).toBe(0);
   });
   it("protects MCP and audit while exposing public liveness", async () => {

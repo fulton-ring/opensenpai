@@ -9,6 +9,7 @@ import { type Observation, ResearchError } from "../contracts.js";
 import { ObservationExecutor } from "./execution.js";
 import { drainSettlements } from "./spend.js";
 import type { RuntimeOptions } from "./types.js";
+import { reconcilePendingUsage } from "./usage.js";
 
 export { retrievalId } from "./execution.js";
 export type { RuntimeOptions, RuntimeStore } from "./types.js";
@@ -78,7 +79,6 @@ export class Runtime {
     await this.mastra.getStorage()?.init();
     if (this.options.role !== "api" || this.options.dispatchMode === "external")
       await this.options.store.recoverExpired();
-    await drainSettlements(this.options);
     if (!this.options.directOnly && this.options.role !== "api")
       await this.mastra.startWorkers("orchestration");
     if (!this.options.directOnly && this.options.dispatchMode !== "external") {
@@ -108,6 +108,7 @@ export class Runtime {
     if (this.stopped || this.repairing) return;
     this.repairing = (async () => {
       await this.options.store.recoverExpired();
+      await reconcilePendingUsage(this.options);
       await drainSettlements(this.options);
       await this.drain();
     })();
@@ -137,7 +138,6 @@ export class Runtime {
     if (this.options.role === "api" && this.options.dispatchMode !== "external") return;
     await this.mastra.getStorage()?.init();
     if (this.options.dispatchMode === "external") await this.options.store.recoverExpired();
-    await drainSettlements(this.options);
     const run = await this.mastra.getWorkflow("observationDirect").createRun();
     const outcome = await run.start({ inputData: { id } });
     if (outcome.status === "failed") throw outcome.error;
@@ -145,6 +145,7 @@ export class Runtime {
 
   /** Retry durable host billing delivery without dispatching or replaying provider work. */
   async retrySettlements() {
+    await reconcilePendingUsage(this.options);
     await drainSettlements(this.options);
   }
 
