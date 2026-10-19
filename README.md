@@ -123,7 +123,7 @@ Native search lets the provider decide how to search. Controlled Exa retrieval s
 
 Observations can be `pending`, `running`, `succeeded`, `failed`, `cancelled`, or `unknown_outcome`. A dispatched request whose outcome cannot be established is retained as unknown; it is not automatically retried as another paid call. Cancellation can leave incurred costs and useful outputs. Inspect durable attempts before deliberately submitting replacement work.
 
-Results retain requested and returned models, serving-provider metadata where available, search activity, citations, sources, usage, and errors. Missing token counts or charges remain null. Estimated cost and reported cost are distinct: `max_estimated_cost_usd` gates the estimate before dispatch, not the vendor's final bill. Reservations remain when charges are uncertain. Back up the research and Mastra databases independently of container images.
+Results retain requested and returned models, serving-provider metadata where available, search activity, citations, sources, usage, and errors. Missing token counts or charges remain null. Estimated cost and reported cost are distinct: `max_estimated_cost_usd` gates each paid request's estimated reservation before dispatch (see [docs/api.md](docs/api.md)), not the vendor's final bill. Reservations remain when charges are uncertain. Back up the research and Mastra databases independently of container images.
 
 ## Deployment and roles
 

@@ -60,7 +60,7 @@ Search choices are:
 
 `max_uses` is 1–3; `max_results` is 1–10. Prompts require unique IDs and text of at most 8000 characters. A run accepts 1–25 prompts, 1–10 unique targets, and 1–5 repetitions, with at most 100 total observations. `repetitions` defaults to 1 and `locale` to `en-US`. The required idempotency key is 1–160 characters and scoped to the trusted workspace. Reusing it with changed input returns a conflict.
 
-Cost forecasts are not exposed through MCP or REST. Internal reservations distinguish missing prices from known zero, and results retain provider-reported charges. `max_estimated_cost_usd` must be positive and at most 1000; it rejects unpriced or over-budget starts, but cannot guarantee the provider's final charge. Preserve unknown outcomes before deliberately retrying paid work. Normal observation responses retain normalized answers, citations, usage, and provenance. `include_raw=true` also returns full source text, provider payloads, and metadata.
+Cost forecasts are not exposed through MCP or REST. Internal reservations distinguish missing prices from known zero, and results retain provider-reported charges. `max_estimated_cost_usd` must be positive and at most 1000. Budgeted starts reject unpriced targets; the full batch estimate may exceed the cap. Each new model or retrieval reservation must fit within the cap together with actual spend and existing reservations. Estimates cannot guarantee the provider's final charge. Preserve unknown outcomes before deliberately retrying paid work. Normal observation responses retain normalized answers, citations, usage, and provenance. `include_raw=true` also returns full source text, provider payloads, and metadata.
 
 ## Errors
 

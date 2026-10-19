@@ -220,11 +220,6 @@ export class ResearchService {
           "UNPRICED_TARGET",
           "Cannot enforce a budget with unpriced targets. Configure pricing or choose priced targets.",
         );
-      if (estimate.estimated_cost_usd > input.max_estimated_cost_usd)
-        throw new ResearchError(
-          "BUDGET_EXCEEDED",
-          "Estimated run cost exceeds max_estimated_cost_usd. Reduce observations or increase the budget.",
-        );
     }
     await this.options.authorizeRun?.(estimate);
     return this.options.store.createRun(input, targets, estimate);
