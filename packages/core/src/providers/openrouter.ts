@@ -478,6 +478,20 @@ async function verify(
   return result;
 }
 
+function classifyRateLimit(error: unknown): unknown {
+  if (error instanceof ProviderResponseError) {
+    const body = obj(obj(error.result.raw_response).error);
+    if (num(body.code) === 429) {
+      error.code = "provider_http_429";
+      error.message =
+        str(obj(body.metadata).limit_source) === "upstream_provider_shared_pool"
+          ? "Serving provider is rate-limited; retry later or explicitly select another serving_provider"
+          : "Request was rate-limited; retry later";
+    }
+  }
+  return error;
+}
+
 /** Filter model/search pairs against current OpenRouter capabilities, pin the route, and verify execution. */
 export function createOpenRouterProvider(options: RouterOptions = {}): ModelProvider {
   return {
@@ -513,17 +527,7 @@ export function createOpenRouterProvider(options: RouterOptions = {}): ModelProv
       try {
         return await sdk.execute(request, context);
       } catch (error) {
-        if (error instanceof ProviderResponseError) {
-          const body = obj(obj(error.result.raw_response).error);
-          if (num(body.code) === 429) {
-            error.code = "provider_http_429";
-            error.message =
-              str(obj(body.metadata).limit_source) === "upstream_provider_shared_pool"
-                ? "Serving provider is rate-limited; retry later or explicitly select another serving_provider"
-                : "Request was rate-limited; retry later";
-          }
-        }
-        throw error;
+        throw classifyRateLimit(error);
       }
     },
   };
