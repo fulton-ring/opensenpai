@@ -210,3 +210,20 @@ it("exposes upstream throttling safely while retaining the failed response for a
     result: { raw_response: { error: { code: 429 } } },
   });
 });
+
+it.each([{ limit_source: "account" }, undefined])(
+  "does not advise another serving provider for non-upstream throttling (%o)",
+  async (metadata) => {
+    const fetcher: typeof fetch = async (url) =>
+      String(url).endsWith("/endpoints")
+        ? catalog([capable])
+        : json({ error: { code: 429, message: "PRIVATE ERROR", metadata } }, 429);
+    await expect(
+      createOpenRouterProvider().execute(input(), { ...context, fetch: fetcher }),
+    ).rejects.toMatchObject({
+      code: "provider_http_429",
+      message: "Request was rate-limited; retry later",
+      result: { raw_response: { error: { code: 429 } } },
+    });
+  },
+);

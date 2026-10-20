@@ -514,11 +514,13 @@ export function createOpenRouterProvider(options: RouterOptions = {}): ModelProv
         return await sdk.execute(request, context);
       } catch (error) {
         if (error instanceof ProviderResponseError) {
-          const code = num(obj(obj(error.result.raw_response).error).code);
-          if (code === 429) {
+          const body = obj(obj(error.result.raw_response).error);
+          if (num(body.code) === 429) {
             error.code = "provider_http_429";
             error.message =
-              "Serving provider is rate-limited; retry later or explicitly select another serving_provider";
+              str(obj(body.metadata).limit_source) === "upstream_provider_shared_pool"
+                ? "Serving provider is rate-limited; retry later or explicitly select another serving_provider"
+                : "Request was rate-limited; retry later";
           }
         }
         throw error;
