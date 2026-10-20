@@ -49,7 +49,7 @@ POST this request to `runs`:
 }
 ```
 
-Each target can instead be an operator-configured preset ID. Inline targets select `provider`, `model`, and independent `search`; they cannot supply credentials, pricing, provider configuration, or workspace identity. Optional `serving_provider` pins a serving vendor where supported. Other execution settings include `max_output_tokens` (32–4096, default 512), `timeout_ms` (1000–120000, default 120000), `temperature` (0–2), and `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Availability depends on the adapter and model.
+Each target can instead be an operator-configured preset ID. Inline targets select `provider`, `model`, and independent `search`; they cannot supply credentials, pricing, provider configuration, or workspace identity. Serving endpoint selection is managed by the server and is not a caller option. Other execution settings include `max_output_tokens` (32–4096, default 512), `timeout_ms` (1000–120000, default 120000), `temperature` (0–2), and `reasoning_effort` (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`). Availability depends on the adapter and model.
 
 Search choices are:
 

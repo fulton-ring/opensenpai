@@ -82,12 +82,11 @@ export class ResearchService {
   private async selected(input: RunInput): Promise<Target[]> {
     const selected = input.targets.map((selection) => {
       if (typeof selection !== "string") {
-        const { provider, serving_provider, ...value } = selection;
+        const { provider, ...value } = selection;
         const adapter = this.modelProvider(provider);
         const target = targetSchema.parse({
           ...value,
           transport: provider,
-          ...(serving_provider ? { provider_options: { provider: serving_provider } } : {}),
         });
         return { target, adapter };
       }

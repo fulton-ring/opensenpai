@@ -72,7 +72,7 @@ function mockFetch(engine = "native", provider = "OpenAI"): typeof fetch {
           })
         : response(raw);
 }
-it("pins endpoint, disables fallbacks and verifies actual native search evidence", async () => {
+it("restricts compatible endpoints, allows failover and verifies actual native search evidence", async () => {
   let body: Record<string, unknown> = {};
   let key: unknown;
   const fetcher: typeof fetch = async (url, init) => {
@@ -85,7 +85,6 @@ it("pins endpoint, disables fallbacks and verifies actual native search evidence
   const result = await executeProvider(input(), env, { providers, fetch: fetcher });
   expect(body.provider).toEqual({
     only: ["openai"],
-    order: ["openai"],
     allow_fallbacks: false,
     require_parameters: true,
   });

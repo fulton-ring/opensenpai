@@ -43,7 +43,7 @@ const raw = {
   },
 };
 
-it("uses the ordinary key and resolves only a native-capable endpoint without a workspace policy", async () => {
+it("uses the ordinary key and resolves native-capable routes without a workspace policy", async () => {
   const adapter = createOpenRouterProvider();
   expect(adapter.availability(target(), context)).toEqual({ available: true });
   const requests: string[] = [];
@@ -55,7 +55,7 @@ it("uses the ordinary key and resolves only a native-capable endpoint without a 
       return catalog([{ ...capable, tag: "unsupported", native_tools: {} }, capable]);
     },
   });
-  expect(resolved?.provider_options?.provider).toBe("native-provider");
+  expect(resolved?.provider_options?.provider).toBeUndefined();
   expect(requests).toHaveLength(1);
   expect(requests[0]).toContain("/endpoints");
 });
@@ -80,7 +80,7 @@ it.each([undefined, null, false, true, {}, { type: "" }, { type: 1 }, "web_searc
   },
 );
 
-it("rechecks a persisted native pin and refuses capability loss before a paid call", async () => {
+it("rechecks an operator pin and refuses capability loss before a paid call", async () => {
   let capableNow = true;
   const calls: string[] = [];
   const fetcher: typeof fetch = async (url) => {
@@ -91,7 +91,10 @@ it("rechecks a persisted native pin and refuses capability loss before a paid ca
     ]);
   };
   const adapter = createOpenRouterProvider();
-  const resolved = await adapter.resolveTarget?.(target(), { ...context, fetch: fetcher });
+  const resolved = await adapter.resolveTarget?.(
+    { ...target(), provider_options: { provider: "native-provider" } },
+    { ...context, fetch: fetcher },
+  );
   if (!resolved) throw new Error("Missing resolved target");
   capableNow = false;
   await expect(
@@ -104,7 +107,7 @@ it.each([
   { engine: "native", search: { mode: "native" }, nativeTools: capable.native_tools },
   { engine: "exa", search: { mode: "server", engine: "exa" }, nativeTools: {} },
 ])(
-  "pins $engine requests without imposing native capability on explicit Exa",
+  "routes $engine requests without imposing native capability on explicit Exa",
   async ({ engine, search, nativeTools }) => {
     let paid = 0;
     const fetcher: typeof fetch = async (url, init) => {
@@ -123,8 +126,7 @@ it.each([
       const body = JSON.parse(String(init?.body));
       expect(body.provider).toEqual({
         only: ["native-provider"],
-        order: ["native-provider"],
-        allow_fallbacks: false,
+        allow_fallbacks: true,
         require_parameters: true,
       });
       expect(body.tools[0].parameters.engine).toBe(engine);
@@ -169,7 +171,7 @@ it.each([{ mode: "native" }, { mode: "server", engine: "exa" }, { mode: "off" }]
     ];
     const fetcher: typeof fetch = async () => catalog(endpoints);
     const resolved = await adapter.resolveTarget?.(target(search), { ...context, fetch: fetcher });
-    expect(resolved?.provider_options?.provider).toBe("native-provider");
+    expect(resolved?.provider_options?.provider).toBeUndefined();
     const explicit = await adapter.resolveTarget?.(
       { ...target(search), provider_options: { provider: "provider/flex" } },
       { ...context, fetch: fetcher },
@@ -205,8 +207,7 @@ it("exposes upstream throttling safely while retaining the failed response for a
     createOpenRouterProvider().execute(input(), { ...context, fetch: fetcher }),
   ).rejects.toMatchObject({
     code: "provider_http_429",
-    message:
-      "Serving provider is rate-limited; retry later or explicitly select another serving_provider",
+    message: "Compatible serving providers are rate-limited; retry later",
     result: { raw_response: { error: { code: 429 } } },
   });
 });
@@ -227,3 +228,120 @@ it.each([{ limit_source: "account" }, undefined])(
     });
   },
 );
+
+it("lets OpenRouter fail over between compatible endpoints without changing model or native search", async () => {
+  const alternate = { ...capable, tag: "alternate", provider_name: "Alternate" };
+  const calls: string[] = [];
+  const fetcher: typeof fetch = async (url, init) => {
+    calls.push(String(url));
+    if (String(url).endsWith("/endpoints"))
+      return catalog([
+        capable,
+        alternate,
+        { ...capable, tag: "unsupported", native_tools: {} },
+        { ...capable, tag: "native-provider/flex", service_tier: "flex" },
+      ]);
+    if (String(url).includes("/generation?")) return json({}, 404);
+    const body = JSON.parse(String(init?.body));
+    expect(body.model).toBe("author/model");
+    expect(body.provider.only).toEqual(["native-provider", "alternate"]);
+    expect(body.provider.allow_fallbacks).toBe(true);
+    expect(body.provider.order).toBeUndefined();
+    expect(body.provider.ignore).toContain("native-provider/flex");
+    expect(body.tools[0].parameters.engine).toBe("native");
+    return json({
+      ...raw,
+      provider: "Alternate",
+      openrouter_metadata: {
+        requested: "author/model",
+        pipeline: [
+          {
+            type: "server_tools",
+            name: "server-tools",
+            data: { mode: "native", tools: ["openrouter:web_search"] },
+          },
+        ],
+      },
+    });
+  };
+  const adapter = createOpenRouterProvider();
+  const resolved = await adapter.resolveTarget?.(target(), { ...context, fetch: fetcher });
+  expect(resolved?.provider_options?.provider).toBeUndefined();
+  const result = await adapter.execute(input(resolved), { ...context, fetch: fetcher });
+  expect(result.serving_provider).toBe("Alternate");
+  expect(result.search_activity.observed).toBe("executed");
+  expect(calls.filter((url) => url.includes("/chat/completions"))).toHaveLength(1);
+});
+
+it("reserves the maximum compatible route prices and excludes later price increases before dispatch", async () => {
+  const adapter = createOpenRouterProvider();
+  const alternate = {
+    ...capable,
+    tag: "alternate",
+    pricing: {
+      prompt: "0.000003",
+      completion: "0.000004",
+      web_search: "0.02",
+    },
+  };
+  const resolved = await adapter.resolveTarget?.(target(), {
+    ...context,
+    fetch: async () => catalog([capable, alternate]),
+  });
+  expect(resolved?.pricing).toEqual({
+    input_per_million: 3,
+    output_per_million: 4,
+    search_per_request: 0.02,
+  });
+  const calls: string[] = [];
+  await expect(
+    adapter.execute(input(resolved), {
+      ...context,
+      fetch: async (url) => {
+        calls.push(String(url));
+        return catalog([{ ...alternate, pricing: { ...alternate.pricing, prompt: "0.000009" } }]);
+      },
+    }),
+  ).rejects.toMatchObject({ code: "provider_not_dispatched" });
+  expect(calls).toHaveLength(1);
+});
+
+it("uses a remaining compatible route when a default endpoint loses native capability", async () => {
+  const adapter = createOpenRouterProvider();
+  const resolved = await adapter.resolveTarget?.(target(), {
+    ...context,
+    fetch: async () => catalog([capable]),
+  });
+  let paid = 0;
+  const result = await adapter.execute(input(resolved), {
+    ...context,
+    fetch: async (url, init) => {
+      if (String(url).endsWith("/endpoints"))
+        return catalog([
+          { ...capable, native_tools: {} },
+          { ...capable, tag: "alternate", provider_name: "Alternate" },
+        ]);
+      if (String(url).includes("/generation?")) return json({}, 404);
+      paid++;
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider.only).toEqual(["alternate"]);
+      expect(body.provider.ignore).toContain("native-provider");
+      return json({
+        ...raw,
+        provider: "Alternate",
+        openrouter_metadata: {
+          requested: "author/model",
+          pipeline: [
+            {
+              type: "server_tools",
+              name: "server-tools",
+              data: { mode: "native", tools: ["openrouter:web_search"] },
+            },
+          ],
+        },
+      });
+    },
+  });
+  expect(result.search_activity.observed).toBe("executed");
+  expect(paid).toBe(1);
+});

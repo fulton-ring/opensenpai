@@ -15,7 +15,6 @@ const inline = {
   id: "glm-research",
   provider: "compatible",
   model: "z-ai/glm-4.7",
-  serving_provider: "dedicated",
   search: { mode: "controlled", engine: "exa" },
 };
 const input = {
@@ -141,7 +140,6 @@ it("selects an inline model and independent search through estimate, durable run
     transport: "compatible",
     model: inline.model,
     search: inline.search,
-    provider_options: { provider: "dedicated" },
   });
   await f.runtime.executeObservation(observation.id);
   expect((await f.service.getRun({ run_id: run.id, wait_ms: 0 })).status).toBe("succeeded");
@@ -213,7 +211,7 @@ it("rejects resolvers that silently change the requested model, adapter or searc
   expect(f.generated).toEqual([]);
   expect(await f.store.listRuns()).toEqual([]);
 });
-it("preserves caller execution limits, reasoning and an explicit serving provider during pricing resolution", async () => {
+it("preserves caller execution limits and reasoning during pricing resolution", async () => {
   const f = await fixture();
   const adapter = f.providers.models.compatible;
   const selection = {
@@ -229,8 +227,6 @@ it("preserves caller execution limits, reasoning and an explicit serving provide
     { temperature: 0.8 },
     { reasoning_effort: "low" },
     { location: "different" },
-    { provider_options: { provider: "substitute" } },
-    { provider_options: undefined },
   ]) {
     Object.assign(f.providers.models, {
       compatible: {

@@ -132,7 +132,7 @@ export function createResearchMcp(
     name: "OpenSenpai Research",
     version: "0.1.0",
     instructions:
-      "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to start_run; named presets are optional. No code edits are needed to choose a model. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
+      "Discover model and retrieval providers with list_targets. Set provider and model_query to search a model catalog. Pass inline targets containing id, provider, model, and independent search configuration to start_run; named presets are optional. No code edits are needed to choose a model. Serving endpoints are managed automatically by the server; select only the model provider, model, and search behavior. Poll get_run and retrieve get_results. Budgets use server-owned pricing. Provider credentials and configuration cannot be changed through MCP.",
     tools: {
       ...accountTools(account),
       list_targets: tool(
