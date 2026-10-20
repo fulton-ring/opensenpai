@@ -75,7 +75,9 @@ async function catalogEndpoint(
   if (body.id !== undefined && body.id !== target.model) throw new Error("model mismatch");
   const tag = str(target.provider_options?.provider);
   const selected = records(body.endpoints).find(
-    (value) => (!tag || value.tag === tag) && eligible(target, value),
+    (value) =>
+      (tag ? value.tag === tag : value.service_tier == null || value.service_tier === "default") &&
+      eligible(target, value),
   );
   if (!selected || (selected.model_id !== undefined && selected.model_id !== target.model))
     throw new Error("endpoint unavailable");
@@ -485,7 +487,16 @@ export function createOpenRouterProvider(options: RouterOptions = {}): ModelProv
     reconcileUsage: (target, result, context) => reconcileUsage(options, target, result, context),
     execute: async (input, context) => {
       const signal = AbortSignal.any([input.signal, AbortSignal.timeout(input.target.timeout_ms)]);
-      const request = { ...input, signal };
+      const request = {
+        ...input,
+        signal,
+        prompt: searchEnabled(input.target)
+          ? {
+              ...input.prompt,
+              text: `${input.prompt.text}\n\nSearch the web before answering using the configured web search tool. Cite the sources you actually retrieve.`,
+            }
+          : input.prompt,
+      };
       const key = context.env[apiKeyEnv(options, input.target) ?? ""] ?? "";
       const selected = await endpoint(request, context, key);
       const sdk = createSdkProvider({
@@ -499,7 +510,19 @@ export function createOpenRouterProvider(options: RouterOptions = {}): ModelProv
         }),
         verify: (result, value, original) => verify(result, value, original, key, selected),
       });
-      return sdk.execute(request, context);
+      try {
+        return await sdk.execute(request, context);
+      } catch (error) {
+        if (error instanceof ProviderResponseError) {
+          const code = num(obj(obj(error.result.raw_response).error).code);
+          if (code === 429) {
+            error.code = "provider_http_429";
+            error.message =
+              "Serving provider is rate-limited; retry later or explicitly select another serving_provider";
+          }
+        }
+        throw error;
+      }
     },
   };
 }
