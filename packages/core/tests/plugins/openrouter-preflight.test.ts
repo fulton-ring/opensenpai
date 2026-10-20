@@ -345,3 +345,31 @@ it("uses a remaining compatible route when a default endpoint loses native capab
   expect(result.search_activity.observed).toBe("executed");
   expect(paid).toBe(1);
 });
+
+it("does not block an operator-pinned variant by ignoring its parent provider", async () => {
+  const pinned = { ...target(), provider_options: { provider: "native-provider/flex" } };
+  const adapter = createOpenRouterProvider();
+  const result = await adapter.execute(input(pinned), {
+    ...context,
+    fetch: async (url, init) => {
+      if (String(url).endsWith("/endpoints"))
+        return catalog([
+          capable,
+          { ...capable, tag: "native-provider/flex", service_tier: "flex" },
+        ]);
+      if (String(url).includes("/generation?"))
+        return json({
+          data: {
+            model: "author/model",
+            provider_name: "Provider",
+            web_search_engine: "native",
+          },
+        });
+      const body = JSON.parse(String(init?.body));
+      expect(body.provider.only).toEqual(["native-provider/flex"]);
+      expect(body.provider.ignore ?? []).not.toContain("native-provider");
+      return json(raw);
+    },
+  });
+  expect(result.search_activity.observed).toBe("executed");
+});

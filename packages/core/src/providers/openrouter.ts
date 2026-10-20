@@ -117,7 +117,11 @@ async function endpoint(
       })),
       // OpenRouter base slugs also match variants, so explicitly exclude incompatible catalog entries.
       ignore: catalog.endpoints
-        .filter((value) => !selected.includes(value))
+        .filter(
+          (value) =>
+            !selected.includes(value) &&
+            !selected.some((allowed) => String(allowed.tag).startsWith(`${String(value.tag)}/`)),
+        )
         .flatMap((value) => str(value.tag) ?? []),
     };
   } catch {
