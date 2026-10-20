@@ -41,3 +41,25 @@ describe("research contracts", () => {
     expect(targetSchema.safeParse({ ...target, api_key: "secret" }).success).toBe(false);
   });
 });
+
+it("does not expose endpoint selection to research callers", () => {
+  const input = {
+    prompts: [{ id: "p", text: "Research" }],
+    idempotency_key: "no-pin",
+    targets: [
+      {
+        id: "gemini",
+        provider: "openrouter",
+        model: "google/gemini-3.8-flash",
+        search: { mode: "native" },
+      },
+    ],
+  };
+  expect(runInputSchema.safeParse(input).success).toBe(true);
+  expect(
+    runInputSchema.safeParse({
+      ...input,
+      targets: [{ ...input.targets[0], serving_provider: "google-ai-studio" }],
+    }).success,
+  ).toBe(false);
+});

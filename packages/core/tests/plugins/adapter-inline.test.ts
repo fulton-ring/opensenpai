@@ -33,7 +33,7 @@ const endpoints = [
     pricing: { prompt: "0.000003", completion: "0.000004", web_search: "0.01" },
   },
 ];
-it("resolves an inline native model to its first capable endpoint and catalog pricing", async () => {
+it("resolves an inline native model to capable routes and catalog pricing", async () => {
   const original = target("native");
   const resolved = await router.resolveTarget?.(original, {
     ...key,
@@ -43,7 +43,6 @@ it("resolves an inline native model to its first capable endpoint and catalog pr
     id: original.id,
     model: original.model,
     search: original.search,
-    provider_options: { provider: "author" },
     pricing: { input_per_million: 3, output_per_million: 4, search_per_request: 0.01 },
   });
   expect(original.provider_options).toBeUndefined();
@@ -58,14 +57,15 @@ it("respects explicit endpoint selection and never silently chooses another", as
     }),
   ).rejects.toMatchObject({ code: "target_unavailable" });
 });
-it("uses a deterministic endpoint and pins plain and controlled models too", async () => {
+it("reserves compatible route prices without pinning plain and controlled models", async () => {
   for (const search of [{ mode: "off" }, { mode: "controlled", engine: "exa" }]) {
     const original = targetSchema.parse({ ...target(), search });
     const resolved = await router.resolveTarget?.(original, {
       ...key,
       fetch: async () => response({ data: { endpoints } }),
     });
-    expect(resolved?.provider_options?.provider).toBe("reseller");
+    expect(resolved?.provider_options?.provider).toBeUndefined();
+    expect(resolved?.pricing?.input_per_million).toBe(3);
     expect(resolved?.pricing?.search_per_request).toBe(0);
   }
 });

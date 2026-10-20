@@ -21,6 +21,11 @@ interface Endpoint {
   providerName: string;
 }
 
+interface Route {
+  endpoints: Endpoint[];
+  ignore: string[];
+}
+
 const root = "https://openrouter.ai/api/v1";
 
 const searchEnabled = (target: Target) =>
@@ -59,7 +64,7 @@ function eligible(target: Target, value: Record<string, unknown>) {
   );
 }
 
-async function catalogEndpoint(
+async function catalogEndpoints(
   target: Target,
   context: ProviderContext,
   key: string,
@@ -74,28 +79,55 @@ async function catalogEndpoint(
   const body = obj(obj(await response.json()).data);
   if (body.id !== undefined && body.id !== target.model) throw new Error("model mismatch");
   const tag = str(target.provider_options?.provider);
-  const selected = records(body.endpoints).find(
+  const endpoints = records(body.endpoints);
+  const selected = endpoints.filter(
     (value) =>
       (tag ? value.tag === tag : value.service_tier == null || value.service_tier === "default") &&
+      (value.model_id === undefined || value.model_id === target.model) &&
       eligible(target, value),
   );
-  if (!selected || (selected.model_id !== undefined && selected.model_id !== target.model))
-    throw new Error("endpoint unavailable");
-  return selected;
+  if (!selected.length) throw new Error("endpoint unavailable");
+  return { selected, endpoints };
+}
+
+function withinReservation(target: Target, value: Record<string, unknown>) {
+  if (!target.pricing) return true;
+  const rates = pricing(target, value);
+  return (
+    rates &&
+    Object.entries(target.pricing).every(
+      ([key, limit]) => rates[key as keyof typeof rates] <= limit,
+    )
+  );
 }
 
 async function endpoint(
   input: ProviderInput,
   context: ProviderContext,
   key: string,
-): Promise<Endpoint> {
+): Promise<Route> {
   try {
-    const selected = await catalogEndpoint(input.target, context, key, input.signal);
-    return { tag: String(selected.tag), providerName: String(selected.provider_name) };
+    const catalog = await catalogEndpoints(input.target, context, key, input.signal);
+    const selected = catalog.selected.filter((value) => withinReservation(input.target, value));
+    if (!selected.length) throw new Error("No compatible route within reserved prices");
+    return {
+      endpoints: selected.map((value) => ({
+        tag: String(value.tag),
+        providerName: String(value.provider_name),
+      })),
+      // OpenRouter base slugs also match variants, so explicitly exclude incompatible catalog entries.
+      ignore: catalog.endpoints
+        .filter(
+          (value) =>
+            !selected.includes(value) &&
+            !selected.some((allowed) => String(allowed.tag).startsWith(`${String(value.tag)}/`)),
+        )
+        .flatMap((value) => str(value.tag) ?? []),
+    };
   } catch {
     throw new ResearchError(
       "provider_not_dispatched",
-      "Pinned endpoint does not advertise the required capability",
+      "No serving endpoint supports the required capability within reserved prices",
     );
   }
 }
@@ -145,11 +177,17 @@ async function resolveTarget(
     throw new ResearchError("target_unavailable", available.reason ?? "Target unavailable");
   try {
     const key = context.env[apiKeyEnv(options, target) ?? ""] ?? "";
-    const selected = await catalogEndpoint(target, context, key, AbortSignal.timeout(15_000));
+    const { selected } = await catalogEndpoints(target, context, key, AbortSignal.timeout(15_000));
+    const rates = selected.map((value) => pricing(target, value));
     return {
       ...target,
-      provider_options: { ...target.provider_options, provider: String(selected.tag) },
-      pricing: pricing(target, selected),
+      pricing: rates.every((value) => value !== undefined)
+        ? {
+            input_per_million: Math.max(...rates.map((value) => value.input_per_million)),
+            output_per_million: Math.max(...rates.map((value) => value.output_per_million)),
+            search_per_request: Math.max(...rates.map((value) => value.search_per_request)),
+          }
+        : undefined,
     };
   } catch {
     throw new ResearchError(
@@ -187,13 +225,21 @@ async function listModels(query: { query?: string; limit: number }, context: Pro
   }
 }
 
-function requestBody(input: ProviderInput, selected: Endpoint | null) {
+function requestBody(input: ProviderInput, selected: Route) {
   const search = input.target.search;
   return {
     provider: {
-      allow_fallbacks: false,
-      ...(selected
-        ? { only: [selected.tag], order: [selected.tag], require_parameters: true }
+      allow_fallbacks: !input.target.provider_options?.provider,
+      only: selected.endpoints.map((value) => value.tag),
+      ...(selected.ignore.length ? { ignore: selected.ignore } : {}),
+      require_parameters: true,
+      ...(input.target.pricing
+        ? {
+            max_price: {
+              prompt: input.target.pricing.input_per_million,
+              completion: input.target.pricing.output_per_million,
+            },
+          }
         : {}),
     },
     ...(input.target.reasoning_effort
@@ -435,7 +481,7 @@ async function verify(
   input: ProviderInput,
   context: ProviderContext,
   key: string,
-  selected: Endpoint | null,
+  selected: Route,
 ): Promise<ProviderResult> {
   if (!searchEnabled(input.target)) return result;
   const responses = responseBodies(result);
@@ -460,11 +506,15 @@ async function verify(
   const proved =
     responses.length > 0 &&
     responses.every((response, i) =>
-      searchProof(response, items[i] ?? null, input.target, selected, expectedEngine),
+      selected.endpoints.some((value) =>
+        searchProof(response, items[i] ?? null, input.target, value, expectedEngine),
+      ),
     );
   const intrinsic =
     responses.length > 0 &&
-    responses.every((response) => intrinsicSonarProof(response, input.target, selected));
+    responses.every((response) =>
+      selected.endpoints.some((value) => intrinsicSonarProof(response, input.target, value)),
+    );
   const searched =
     (result.usage.search_requests ?? 0) > 0 || (result.usage.search_requests === null && intrinsic);
   if (!searched || !proved)
@@ -485,14 +535,14 @@ function classifyRateLimit(error: unknown): unknown {
       error.code = "provider_http_429";
       error.message =
         str(obj(body.metadata).limit_source) === "upstream_provider_shared_pool"
-          ? "Serving provider is rate-limited; retry later or explicitly select another serving_provider"
+          ? "Compatible serving providers are rate-limited; retry later"
           : "Request was rate-limited; retry later";
     }
   }
   return error;
 }
 
-/** Filter model/search pairs against current OpenRouter capabilities, pin the route, and verify execution. */
+/** Filter model/search pairs against current OpenRouter capabilities, allow compatible provider failover, and verify execution. */
 export function createOpenRouterProvider(options: RouterOptions = {}): ModelProvider {
   return {
     availability: (target, context) => availability(options, target, context),

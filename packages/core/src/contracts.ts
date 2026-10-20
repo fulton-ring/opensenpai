@@ -74,7 +74,6 @@ export const inlineTargetSchema = targetSchema
   })
   .extend({
     provider: adapterId,
-    serving_provider: z.string().min(1).max(200).optional(),
   })
   .strict();
 /** Accept either a configured preset ID or an inline model and search selection. */
