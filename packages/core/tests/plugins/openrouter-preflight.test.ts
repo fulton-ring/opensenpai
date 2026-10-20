@@ -128,6 +128,7 @@ it.each([
         require_parameters: true,
       });
       expect(body.tools[0].parameters.engine).toBe(engine);
+      expect(body.messages.at(-1).content).toContain("Search the web before answering");
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer fixture-key");
       return json(raw);
     };
@@ -156,3 +157,73 @@ it.each([
   expect(calls).toHaveLength(1);
   expect(calls[0]).toContain("/endpoints");
 });
+
+it.each([{ mode: "native" }, { mode: "server", engine: "exa" }, { mode: "off" }])(
+  "does not opt $mode requests into a discounted or priority tier without an explicit pin",
+  async (search) => {
+    const adapter = createOpenRouterProvider();
+    const endpoints = [
+      { ...capable, tag: "provider/flex", service_tier: "flex" },
+      { ...capable, tag: "provider/fast", service_tier: "priority" },
+      { ...capable, service_tier: null },
+    ];
+    const fetcher: typeof fetch = async () => catalog(endpoints);
+    const resolved = await adapter.resolveTarget?.(target(search), { ...context, fetch: fetcher });
+    expect(resolved?.provider_options?.provider).toBe("native-provider");
+    const explicit = await adapter.resolveTarget?.(
+      { ...target(search), provider_options: { provider: "provider/flex" } },
+      { ...context, fetch: fetcher },
+    );
+    expect(explicit?.provider_options?.provider).toBe("provider/flex");
+  },
+);
+
+it("does not silently choose Flex when no standard endpoint is available", async () => {
+  await expect(
+    createOpenRouterProvider().resolveTarget?.(target(), {
+      ...context,
+      fetch: async () => catalog([{ ...capable, tag: "provider/flex", service_tier: "flex" }]),
+    }),
+  ).rejects.toMatchObject({ code: "target_unavailable" });
+});
+
+it("exposes upstream throttling safely while retaining the failed response for accounting", async () => {
+  const fetcher: typeof fetch = async (url) =>
+    String(url).endsWith("/endpoints")
+      ? catalog([capable])
+      : json(
+          {
+            error: {
+              code: 429,
+              message: "PRIVATE ERROR",
+              metadata: { limit_source: "upstream_provider_shared_pool" },
+            },
+          },
+          429,
+        );
+  await expect(
+    createOpenRouterProvider().execute(input(), { ...context, fetch: fetcher }),
+  ).rejects.toMatchObject({
+    code: "provider_http_429",
+    message:
+      "Serving provider is rate-limited; retry later or explicitly select another serving_provider",
+    result: { raw_response: { error: { code: 429 } } },
+  });
+});
+
+it.each([{ limit_source: "account" }, undefined])(
+  "does not advise another serving provider for non-upstream throttling (%o)",
+  async (metadata) => {
+    const fetcher: typeof fetch = async (url) =>
+      String(url).endsWith("/endpoints")
+        ? catalog([capable])
+        : json({ error: { code: 429, message: "PRIVATE ERROR", metadata } }, 429);
+    await expect(
+      createOpenRouterProvider().execute(input(), { ...context, fetch: fetcher }),
+    ).rejects.toMatchObject({
+      code: "provider_http_429",
+      message: "Request was rate-limited; retry later",
+      result: { raw_response: { error: { code: 429 } } },
+    });
+  },
+);
