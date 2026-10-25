@@ -23,7 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/openai-compatible": "3.0.71",
+    "@ai-sdk/openai-compatible": "3.0.77",
     "@libsql/client": "0.18.0",
     "@mastra/core": "1.78.0",
     "@mastra/libsql": "1.26.2",
