@@ -25,9 +25,9 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.71",
     "@libsql/client": "0.18.0",
-    "@mastra/core": "1.78.0",
-    "@mastra/libsql": "1.26.2",
-    "@mastra/valkey-streams": "0.5.5",
+    "@mastra/core": "1.79.0",
+    "@mastra/libsql": "1.27.0",
+    "@mastra/valkey-streams": "0.5.6",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "ai": "7.0.143",
     "zod": "4.6.7"
